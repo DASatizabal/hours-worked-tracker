@@ -1,5 +1,5 @@
 # Hours Worked Tracker - Setup Guide
-**Current Version: v1.5.0**
+**Current Version: v1.5.1**
 
 ## 1. Firebase Setup (Google Sign-In)
 
@@ -54,20 +54,31 @@ Or paste it in the app's **Settings** modal.
 
 The email scanner looks for:
 - **DataAnnotation payout emails** from `noreply@mail.dataannotation.tech` with subject "New Payout!"
-- **PayPal receipt emails** from `service@paypal.com` with subject "You have a new payout!"
+- **PayPal transfer emails** from `service@paypal.com` with subject "Your transfer request is processing"
 
 This uses Gmail's native `GmailApp.search()` in Apps Script - no extra API setup needed. The Apps Script runs under your Google account, which already has Gmail access.
 
 ### How it works
-1. Click **Scan Emails** in the app
-2. The Apps Script searches your Gmail for DA/PayPal payout emails (last 30 days)
-3. It parses amounts, payment IDs, and transaction IDs
+1. Click **Scan Emails** in the app (or let the automatic trigger run hourly)
+2. The Apps Script searches your Gmail for DA/PayPal emails (last 30 days)
+3. It parses amounts and estimated arrival dates
 4. It saves them to the **EmailPayouts** tab
-5. It matches DA payouts to pipeline payments and auto-advances them
+5. The pipeline calculates totals based on these email records
 
-### Matching Logic
-- DA payout email -> Matches to a pipeline payment by amount -> Advances to "Paid Out"
-- PayPal receipt email -> Matches to a pipeline payment by DA Payment ID (from the PayPal note field) -> Advances to "In Bank"
+### Pipeline Calculation
+- **Submitted** = work sessions where payout time hasn't elapsed (7d for projects, 3d for tasks)
+- **Available for Payout** = sessions past waiting time minus DA payout totals
+- **In PayPal** = DA payout totals minus PayPal transfer totals
+- **Transferring** = PayPal transfers where estimated arrival > now
+- **In Bank** = PayPal transfers where estimated arrival <= now
+
+### Enable Automatic Scanning (Recommended)
+To have emails scanned automatically every hour:
+1. In Apps Script, click **Run** > Select `setupEmailTrigger` > **Run**
+2. Authorize the trigger when prompted
+3. Emails will now be scanned hourly without manual intervention
+
+To disable: Run `removeEmailTriggers` in Apps Script.
 
 ## 5. Update Auth Roles
 

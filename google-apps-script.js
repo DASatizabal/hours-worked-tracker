@@ -386,3 +386,45 @@ function initializeTabs() {
   });
   Logger.log('All tabs initialized!');
 }
+
+// ============ Automatic Email Scanning ============
+
+// Set up hourly trigger to automatically scan emails
+// Run this function once manually to enable automatic scanning
+function setupEmailTrigger() {
+  // Remove any existing triggers first
+  removeEmailTriggers();
+
+  // Create new hourly trigger
+  ScriptApp.newTrigger('scanEmails')
+    .timeBased()
+    .everyHours(1)
+    .create();
+
+  Logger.log('Email scan trigger created - will run every hour');
+}
+
+// Remove all email scan triggers
+function removeEmailTriggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'scanEmails') {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log('Removed existing scanEmails trigger');
+    }
+  });
+}
+
+// Check current trigger status
+function checkTriggerStatus() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const emailTriggers = triggers.filter(t => t.getHandlerFunction() === 'scanEmails');
+
+  if (emailTriggers.length === 0) {
+    Logger.log('No email scan triggers found. Run setupEmailTrigger() to enable automatic scanning.');
+  } else {
+    emailTriggers.forEach(t => {
+      Logger.log('Found trigger: ' + t.getHandlerFunction() + ' - runs every ' + t.getTriggerSource());
+    });
+  }
+}
