@@ -727,12 +727,11 @@ const App = {
 
     async deleteGoal(id) {
         if (!confirm('Delete this savings goal? This will also remove all allocations.')) return;
+        this.showToast('Deleting goal...', 'info');
         try {
-            // Delete allocations for this goal
             const allocations = await SheetsAPI.getGoalAllocations();
-            for (const alloc of allocations.filter(a => a.goalId === id)) {
-                await SheetsAPI.deleteGoalAllocation(alloc.id);
-            }
+            const goalAllocs = allocations.filter(a => a.goalId === id);
+            await Promise.all(goalAllocs.map(a => SheetsAPI.deleteGoalAllocation(a.id)));
             await SheetsAPI.deleteGoal(id);
             this.showToast('Goal deleted', 'success');
             await Goals.renderGoals();

@@ -142,7 +142,7 @@ const Pipeline = {
         let html = '<div class="flex items-center gap-0 mb-6">';
         this.STAGES.forEach((stage, i) => {
             const count = groups[stage].length;
-            const total = groups[stage].reduce((s, p) => s + p.amount, 0);
+            const total = groups[stage].reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
             const colors = this.STAGE_COLORS[stage];
             const isActive = count > 0;
 
@@ -197,7 +197,7 @@ const Pipeline = {
                         <div class="flex items-center gap-3">
                             <i data-lucide="${this.STAGE_ICONS[stage]}" class="w-4 h-4 ${colors.text}"></i>
                             <div>
-                                <span class="text-sm font-medium text-white">$${p.amount.toFixed(2)}</span>
+                                <span class="text-sm font-medium text-white">$${(parseFloat(p.amount) || 0).toFixed(2)}</span>
                                 <span class="text-xs text-slate-400 ml-2 capitalize">${p.type}</span>
                                 ${countdownHTML}
                             </div>
