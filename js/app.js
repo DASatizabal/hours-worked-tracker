@@ -264,8 +264,8 @@ const App = {
         const empty = document.getElementById('sessions-empty');
         if (!tbody) return;
 
-        // Sort by date descending
-        const sorted = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
+        // Sort by submittedAt descending (newest first)
+        const sorted = [...sessions].sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
 
         if (sorted.length === 0) {
             tbody.innerHTML = '';
