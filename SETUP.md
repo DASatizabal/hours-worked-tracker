@@ -1,5 +1,5 @@
 # Hours Worked Tracker - Setup Guide
-**Current Version: v1.5.4**
+**Current Version: v1.5.5**
 
 ## 1. Firebase Setup (Google Sign-In)
 
