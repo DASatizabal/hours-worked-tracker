@@ -2,6 +2,24 @@
 
 const App = {
     _workType: 'project', // 'project' or 'task'
+    _submitting: false, // Prevent double-clicks
+
+    // Lock/unlock submit buttons during async operations
+    setSubmitting(form, busy) {
+        this._submitting = busy;
+        const btn = form?.querySelector('button[type="submit"]');
+        if (btn) {
+            btn.disabled = busy;
+            if (busy) {
+                btn.dataset.originalText = btn.textContent;
+                btn.textContent = 'Saving...';
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                btn.textContent = btn.dataset.originalText || btn.textContent;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+    },
 
     // ============ Initialization ============
 
@@ -65,7 +83,7 @@ const App = {
                 }
             }
 
-            this.renderDashboard(sessions);
+            this.renderDashboard(sessions, payments);
             this.renderSessionsTable(sessions);
             Pipeline.renderPipeline(payments);
             await Goals.renderGoals();
@@ -153,6 +171,9 @@ const App = {
         document.getElementById('goal-modal-backdrop')?.addEventListener('click', () => this.closeModal('goal-modal'));
         document.getElementById('goal-form')?.addEventListener('submit', (e) => this.handleGoalSubmit(e));
 
+        // Icon picker
+        this.initIconPicker();
+
         // Allocate modal
         document.getElementById('close-allocate-modal')?.addEventListener('click', () => this.closeModal('allocate-modal'));
         document.getElementById('allocate-modal-backdrop')?.addEventListener('click', () => this.closeModal('allocate-modal'));
@@ -212,13 +233,19 @@ const App = {
 
     // ============ Dashboard Rendering ============
 
-    renderDashboard(sessions) {
-        // This week
-        const weekSummary = TaxCalc.thisWeekSummary(sessions);
-        document.getElementById('week-earnings').textContent = '$' + weekSummary.gross.toFixed(2);
-        document.getElementById('week-hours').textContent = weekSummary.hours.toFixed(1) + ' hours';
-        document.getElementById('week-tax').textContent = '$' + weekSummary.tax.toFixed(2);
-        document.getElementById('week-net').textContent = 'Net: $' + weekSummary.net.toFixed(2);
+    renderDashboard(sessions, payments) {
+        // Total amount to be paid = all earnings - payments that reached "in_bank"
+        const totalEarnings = sessions.reduce((sum, s) => sum + (parseFloat(s.earnings) || 0), 0);
+        const inBankTotal = (payments || [])
+            .filter(p => p.status === 'in_bank')
+            .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        const unpaid = totalEarnings - inBankTotal;
+        const totalHours = sessions.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0);
+
+        document.getElementById('week-earnings').textContent = '$' + Math.max(0, unpaid).toFixed(2);
+        document.getElementById('week-hours').textContent = totalHours.toFixed(1) + ' hours worked';
+        document.getElementById('week-tax').textContent = '$' + TaxCalc.calcTax(Math.max(0, unpaid)).toFixed(2);
+        document.getElementById('week-net').textContent = 'Net: $' + TaxCalc.calcNet(Math.max(0, unpaid)).toFixed(2);
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
@@ -363,7 +390,9 @@ const App = {
 
     async handleSessionSubmit(e) {
         e.preventDefault();
+        if (this._submitting) return;
 
+        const form = document.getElementById('session-form');
         const editId = document.getElementById('session-edit-id').value;
         const date = document.getElementById('session-date').value;
         const type = this._workType;
@@ -398,6 +427,9 @@ const App = {
             submittedAt: new Date().toISOString()
         };
 
+        this.setSubmitting(form, true);
+        this.closeModal('session-modal');
+
         try {
             if (editId) {
                 await SheetsAPI.updateWorkSession(editId, session);
@@ -406,12 +438,12 @@ const App = {
                 await SheetsAPI.saveWorkSession(session);
                 this.showToast('Session logged! $' + earnings.toFixed(2) + ' earned', 'success');
             }
-            this.closeModal('session-modal');
             await this.loadData();
         } catch (error) {
             console.error('Error saving session:', error);
             this.showToast('Error saving session', 'error');
         }
+        this.setSubmitting(form, false);
     },
 
     async editSession(id) {
@@ -503,7 +535,9 @@ const App = {
 
     async handlePaymentSubmit(e) {
         e.preventDefault();
+        if (this._submitting) return;
 
+        const form = document.getElementById('payment-form');
         const editId = document.getElementById('payment-edit-id').value;
         const amount = parseFloat(document.getElementById('payment-amount').value);
         const type = document.getElementById('payment-type').value;
@@ -515,6 +549,13 @@ const App = {
             return;
         }
 
+        // Capture session IDs before closing modal
+        const checked = document.querySelectorAll('.payment-session-cb:checked');
+        const sessionIds = Array.from(checked).map(cb => cb.value);
+
+        this.setSubmitting(form, true);
+        this.closeModal('payment-modal');
+
         try {
             if (editId) {
                 await SheetsAPI.updatePayment(editId, {
@@ -524,21 +565,18 @@ const App = {
                 });
                 this.showToast('Payment updated', 'success');
             } else {
-                // Get selected session IDs
-                const checked = document.querySelectorAll('.payment-session-cb:checked');
-                const sessionIds = Array.from(checked).map(cb => cb.value);
                 const payment = Pipeline.createPayment(sessionIds, amount, type);
                 payment.status = status;
                 payment.notes = notes;
                 await SheetsAPI.savePayment(payment);
                 this.showToast('Payment created', 'success');
             }
-            this.closeModal('payment-modal');
             await this.loadData();
         } catch (error) {
             console.error('Error saving payment:', error);
             this.showToast('Error saving payment', 'error');
         }
+        this.setSubmitting(form, false);
     },
 
     async advancePayment(id) {
@@ -565,6 +603,50 @@ const App = {
         await this.openPaymentModal(id);
     },
 
+    // ============ Icon Picker ============
+
+    initIconPicker() {
+        const ICONS = [
+            '🎯', '✈️', '🚢', '🏖️', '🎮', '💻', '📱', '🚗', '🏠', '🎓',
+            '💰', '💎', '🎁', '🎉', '🏆', '⭐', '❤️', '🔥', '🌟', '🎵',
+            '📚', '🛒', '👶', '🐕', '🏋️', '🎬', '🍕', '☕', '🌴', '🎄',
+            '💼', '🔧', '📷', '🎨', '🏥', '🎹', '⚽', '🎲', '🧳', '🛫',
+            '💡', '🔑', '🎤', '🏰', '🌊', '🍎', '🎸', '🚀'
+        ];
+
+        const grid = document.getElementById('icon-picker-grid');
+        const btn = document.getElementById('icon-picker-btn');
+        const input = document.getElementById('goal-icon');
+        if (!grid || !btn || !input) return;
+
+        // Populate grid
+        grid.innerHTML = ICONS.map(icon =>
+            `<button type="button" class="icon-pick-item p-2 text-xl rounded-lg hover:bg-white/10 transition-colors text-center" data-icon="${icon}">${icon}</button>`
+        ).join('');
+
+        // Toggle grid
+        btn.addEventListener('click', () => {
+            grid.classList.toggle('hidden');
+        });
+
+        // Select icon
+        grid.addEventListener('click', (e) => {
+            const item = e.target.closest('.icon-pick-item');
+            if (!item) return;
+            const icon = item.dataset.icon;
+            input.value = icon;
+            btn.textContent = icon;
+            grid.classList.add('hidden');
+        });
+
+        // Close grid when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#icon-picker-grid') && !e.target.closest('#icon-picker-btn')) {
+                grid.classList.add('hidden');
+            }
+        });
+    },
+
     // ============ Goal Modal ============
 
     openGoalModal(editId) {
@@ -573,6 +655,9 @@ const App = {
         const form = document.getElementById('goal-form');
         form.reset();
         document.getElementById('goal-edit-id').value = '';
+        // Reset icon picker to default
+        document.getElementById('goal-icon').value = '🎯';
+        document.getElementById('icon-picker-btn').textContent = '🎯';
 
         if (editId) {
             title.textContent = 'Edit Savings Goal';
@@ -592,22 +677,28 @@ const App = {
 
         document.getElementById('goal-edit-id').value = id;
         document.getElementById('goal-name').value = goal.name;
-        document.getElementById('goal-icon').value = goal.icon;
+        document.getElementById('goal-icon').value = goal.icon || '🎯';
+        document.getElementById('icon-picker-btn').textContent = goal.icon || '🎯';
         document.getElementById('goal-target').value = goal.targetAmount;
     },
 
     async handleGoalSubmit(e) {
         e.preventDefault();
+        if (this._submitting) return;
 
+        const form = document.getElementById('goal-form');
         const editId = document.getElementById('goal-edit-id').value;
         const name = document.getElementById('goal-name').value.trim();
-        const icon = document.getElementById('goal-icon').value.trim();
+        const icon = document.getElementById('goal-icon').value.trim() || '🎯';
         const targetAmount = parseFloat(document.getElementById('goal-target').value);
 
         if (!name || !targetAmount) {
             this.showToast('Please fill in all fields', 'error');
             return;
         }
+
+        this.setSubmitting(form, true);
+        this.closeModal('goal-modal');
 
         try {
             if (editId) {
@@ -622,11 +713,11 @@ const App = {
                 });
                 this.showToast('Goal created!', 'success');
             }
-            this.closeModal('goal-modal');
             await Goals.renderGoals();
         } catch (error) {
             this.showToast('Error saving goal', 'error');
         }
+        this.setSubmitting(form, false);
     },
 
     async editGoal(id) {
@@ -676,7 +767,9 @@ const App = {
 
     async handleAllocateSubmit(e) {
         e.preventDefault();
+        if (this._submitting) return;
 
+        const form = document.getElementById('allocate-form');
         const goalId = document.getElementById('allocate-goal-id').value;
         const amount = parseFloat(document.getElementById('allocate-amount').value);
         const paymentId = document.getElementById('allocate-payment').value;
@@ -686,6 +779,9 @@ const App = {
             this.showToast('Please enter a valid amount', 'error');
             return;
         }
+
+        this.setSubmitting(form, true);
+        this.closeModal('allocate-modal');
 
         try {
             await SheetsAPI.saveGoalAllocation({
@@ -708,11 +804,11 @@ const App = {
             }
 
             this.showToast('$' + amount.toFixed(2) + ' allocated!', 'success');
-            this.closeModal('allocate-modal');
             await Goals.renderGoals();
         } catch (error) {
             this.showToast('Error allocating funds', 'error');
         }
+        this.setSubmitting(form, false);
     },
 
     // ============ Settings ============
