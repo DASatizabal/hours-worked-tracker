@@ -470,3 +470,16 @@ function addMissingIds() {
   }
   Logger.log('Added IDs to ' + count + ' rows');
 }
+
+// Clear all EmailPayouts data (keeps header row) - run before rescanning emails
+function clearEmailPayouts() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('EmailPayouts');
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.deleteRows(2, lastRow - 1);
+    Logger.log('Deleted ' + (lastRow - 1) + ' rows from EmailPayouts');
+  } else {
+    Logger.log('EmailPayouts is already empty');
+  }
+}
