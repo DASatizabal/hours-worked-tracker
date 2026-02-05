@@ -28,6 +28,59 @@ const Pipeline = {
         in_bank: 'landmark'
     },
 
+    // DA payout cooldown: 72 hours between payouts
+    DA_PAYOUT_COOLDOWN_HOURS: 72,
+
+    // Calculate payout cooldown status from most recent DA email
+    getPayoutCooldown(emailPayouts) {
+        const now = new Date();
+
+        // Find most recent DA payout email
+        const daPayouts = emailPayouts
+            .filter(e => e.source === 'dataannotation' && e.receivedAt)
+            .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''));
+
+        if (daPayouts.length === 0) {
+            return { available: true, text: 'Available!', color: 'text-emerald-400' };
+        }
+
+        const lastPayout = new Date(daPayouts[0].receivedAt);
+        const nextAvailable = new Date(lastPayout.getTime() + this.DA_PAYOUT_COOLDOWN_HOURS * 60 * 60 * 1000);
+        const remainingMs = nextAvailable - now;
+
+        if (remainingMs <= 0) {
+            return { available: true, text: 'Available!', color: 'text-emerald-400' };
+        }
+
+        // Calculate days, hours, minutes
+        const totalMinutes = Math.floor(remainingMs / (1000 * 60));
+        const days = Math.floor(totalMinutes / (60 * 24));
+        const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+        const minutes = totalMinutes % 60;
+
+        let text = '';
+        if (days > 0) {
+            text = `${days}d ${hours}h ${minutes}m`;
+        } else if (hours > 0) {
+            text = `${hours}h ${minutes}m`;
+        } else {
+            text = `${minutes}m`;
+        }
+
+        // Color based on remaining time
+        const remainingHours = remainingMs / (1000 * 60 * 60);
+        let color;
+        if (remainingHours > 48) {
+            color = 'text-red-400';
+        } else if (remainingHours > 24) {
+            color = 'text-orange-400';
+        } else {
+            color = 'text-yellow-400';
+        }
+
+        return { available: false, text, color };
+    },
+
     // Calculate pipeline totals from work sessions and email payouts
     calculateTotals(workSessions, emailPayouts) {
         const now = new Date();
@@ -105,6 +158,7 @@ const Pipeline = {
     // Render pipeline visualization
     renderPipeline(workSessions, emailPayouts) {
         const totals = this.calculateTotals(workSessions, emailPayouts);
+        const cooldown = this.getPayoutCooldown(emailPayouts);
         const container = document.getElementById('pipeline-stages');
         if (!container) return;
 
@@ -119,11 +173,18 @@ const Pipeline = {
                 html += `<div class="pipeline-connector flex-1 ${isActive ? 'bg-white/20' : 'bg-white/5'}"></div>`;
             }
 
+            // Special handling for Available for Payout stage - show cooldown timer
+            let extraInfo = '';
+            if (stage === 'pending_payout') {
+                extraInfo = `<div class="text-xs ${cooldown.color} mt-1 font-medium">${cooldown.text}</div>`;
+            }
+
             html += `
                 <div class="flex flex-col items-center min-w-[80px]">
                     <div class="pipeline-dot ${isActive ? 'active' : ''}" style="background-color: ${isActive ? colors.dot : 'rgba(255,255,255,0.1)'}; color: ${colors.dot};"></div>
                     <div class="text-xs ${isActive ? colors.text : 'text-slate-600'} mt-2 font-medium text-center">${this.STAGE_LABELS[stage]}</div>
                     <div class="text-sm font-bold ${isActive ? 'text-white' : 'text-slate-700'} mt-1">$${total.toFixed(2)}</div>
+                    ${extraInfo}
                 </div>
             `;
         });
