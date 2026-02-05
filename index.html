@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hours Worked Tracker</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#0f172a">
+    <meta name="description" content="Track DataAnnotation work hours, earnings, taxes, and savings goals">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="HoursTracker">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/icon-192.svg">
+    <link rel="icon" type="image/svg+xml" href="icons/icon-192.svg">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'fade-in': 'fadeIn 0.2s ease-out',
+                        'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        slideUp: {
+                            '0%': { transform: 'translateY(20px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        pulseGlow: {
+                            '0%, 100%': { opacity: '0.5' },
+                            '50%': { opacity: '0.8' },
+                        },
+                    },
+                },
+            },
+        }
+    </script>
+
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="font-sans min-h-screen bg-slate-950 text-slate-100 antialiased">
+    <!-- Background gradient -->
+    <div class="fixed inset-0 -z-10 overflow-hidden" id="bg-gradient">
+        <div class="absolute top-1/4 -left-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl animate-pulse-glow"></div>
+        <div class="absolute bottom-1/4 -right-1/4 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl animate-pulse-glow" style="animation-delay: 1s;"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-600/10 rounded-full blur-3xl"></div>
+    </div>
+
+    <!-- Top Bar -->
+    <div class="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <div id="sync-indicator" class="flex items-center gap-1 px-2 py-1 text-xs rounded-lg transition-colors" title="Sync status">
+            <i data-lucide="cloud" class="w-3 h-3"></i>
+            <span id="sync-status-text">Synced</span>
+        </div>
+        <button class="p-2 hover:bg-white/10 rounded-lg transition-colors group" id="theme-toggle" title="Toggle theme">
+            <i data-lucide="moon" class="w-4 h-4 text-slate-500 group-hover:text-violet-400"></i>
+        </button>
+        <button class="p-2 hover:bg-white/10 rounded-lg transition-colors group" id="settings-btn" title="Settings">
+            <i data-lucide="settings" class="w-4 h-4 text-slate-500 group-hover:text-violet-400"></i>
+        </button>
+        <div id="user-info" class="hidden items-center gap-2">
+            <img id="user-avatar" class="w-7 h-7 rounded-full border border-white/20" alt="User avatar">
+            <span id="user-name" class="text-sm text-slate-300 hidden md:inline"></span>
+            <button id="sign-out-btn" class="flex items-center gap-1 px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-slate-400 hover:text-red-400 hover:border-red-500/50 transition-colors" title="Sign out">
+                <i data-lucide="log-out" class="w-3 h-3"></i>
+                <span class="hidden sm:inline">Sign Out</span>
+            </button>
+        </div>
+        <span class="text-xs text-slate-500" id="version-tag"></span>
+    </div>
+
+    <div class="container mx-auto max-w-5xl px-4 pt-16 pb-8">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-violet-400 via-cyan-400 to-violet-400 bg-clip-text text-transparent mb-2">
+                Hours Worked Tracker
+            </h1>
+            <p class="text-slate-400 text-sm">Track hours, earnings, taxes & savings goals</p>
+        </header>
+
+        <!-- Summary Cards -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <!-- This Week's Earnings -->
+            <div class="group relative bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 hover:border-violet-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-violet-500/10 card">
+                <div class="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div class="relative">
+                    <div class="flex items-center gap-2 text-slate-400 text-sm mb-2">
+                        <i data-lucide="clock" class="w-4 h-4"></i>
+                        <span>This Week's Earnings</span>
+                    </div>
+                    <div class="text-3xl font-bold text-white" id="week-earnings">$0.00</div>
+                    <div class="text-sm text-slate-500 mt-1" id="week-hours">0 hours</div>
+                </div>
+            </div>
+
+            <!-- Tax Card -->
+            <div class="group relative bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 hover:border-cyan-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-cyan-500/10 card">
+                <div class="absolute inset-0 bg-gradient-to-br from-cyan-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div class="relative">
+                    <div class="flex items-center gap-2 text-slate-400 text-sm mb-2">
+                        <i data-lucide="receipt" class="w-4 h-4"></i>
+                        <span>Tax to Set Aside (35%)</span>
+                    </div>
+                    <div class="text-3xl font-bold text-red-400" id="week-tax">$0.00</div>
+                    <div class="text-sm text-emerald-400 mt-1" id="week-net">Net: $0.00</div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="relative bg-gradient-to-br from-violet-600/20 to-cyan-600/20 backdrop-blur-xl rounded-2xl p-6 border border-white/10 flex flex-col items-center justify-center gap-3 card">
+                <button class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-violet-600/25 hover:shadow-violet-600/40 hover:scale-105" id="log-session-btn">
+                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                    <span>Log Work Session</span>
+                </button>
+                <button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white font-medium rounded-xl transition-all duration-300" id="scan-emails-btn">
+                    <i data-lucide="mail-search" class="w-4 h-4"></i>
+                    <span>Scan Emails</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Stats Row -->
+        <section class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white/5 backdrop-blur-xl rounded-xl p-4 border border-white/10 card">
+                <div class="text-xs text-slate-500 mb-1">All Time Gross</div>
+                <div class="text-lg font-bold text-white" id="stat-gross">$0.00</div>
+            </div>
+            <div class="bg-white/5 backdrop-blur-xl rounded-xl p-4 border border-white/10 card">
+                <div class="text-xs text-slate-500 mb-1">All Time Tax</div>
+                <div class="text-lg font-bold text-red-400" id="stat-tax">$0.00</div>
+            </div>
+            <div class="bg-white/5 backdrop-blur-xl rounded-xl p-4 border border-white/10 card">
+                <div class="text-xs text-slate-500 mb-1">All Time Net</div>
+                <div class="text-lg font-bold text-emerald-400" id="stat-net">$0.00</div>
+            </div>
+            <div class="bg-white/5 backdrop-blur-xl rounded-xl p-4 border border-white/10 card">
+                <div class="text-xs text-slate-500 mb-1">Avg $/Week</div>
+                <div class="text-lg font-bold text-cyan-400" id="stat-avg-week">$0.00</div>
+            </div>
+        </section>
+
+        <!-- Payment Pipeline Section -->
+        <section class="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden card mb-8" id="pipeline-section">
+            <div class="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="git-branch" class="w-5 h-5 text-slate-400"></i>
+                    <h2 class="text-lg font-semibold text-white">Payment Pipeline</h2>
+                </div>
+                <button class="flex items-center gap-1 text-xs text-slate-400 hover:text-violet-400 transition-colors" id="toggle-pipeline-details">
+                    <span>Details</span>
+                    <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <!-- Pipeline visualization -->
+            <div class="px-6 py-6" id="pipeline-stages">
+                <!-- Rendered by pipeline.js -->
+            </div>
+            <!-- Expandable details -->
+            <div class="hidden border-t border-white/10 px-6 py-4" id="pipeline-details">
+                <!-- Rendered by pipeline.js -->
+            </div>
+        </section>
+
+        <!-- Savings Goals Section -->
+        <section class="mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="target" class="w-5 h-5 text-slate-400"></i>
+                    <h2 class="text-lg font-semibold text-white">Savings Goals</h2>
+                </div>
+                <button class="flex items-center gap-1 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors" id="create-goal-btn">
+                    <i data-lucide="plus" class="w-3 h-3"></i>
+                    <span>New Goal</span>
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="goals-container">
+                <!-- Goal cards rendered by goals.js -->
+            </div>
+        </section>
+
+        <!-- Recent Work Sessions -->
+        <section class="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden card">
+            <div class="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="history" class="w-5 h-5 text-slate-400"></i>
+                    <h2 class="text-lg font-semibold text-white">Recent Work Sessions</h2>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="export-sessions-btn" class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-violet-400 hover:bg-white/5 rounded-lg transition-colors" title="Export to CSV">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span>Export</span>
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full session-table">
+                    <thead>
+                        <tr class="text-xs text-slate-500 bg-white/5">
+                            <th class="px-4 py-3 text-left font-medium">Date</th>
+                            <th class="px-4 py-3 text-left font-medium">Type</th>
+                            <th class="px-4 py-3 text-right font-medium">Duration</th>
+                            <th class="px-4 py-3 text-right font-medium">Earnings</th>
+                            <th class="px-4 py-3 text-left font-medium">Project ID</th>
+                            <th class="px-4 py-3 text-left font-medium">Notes</th>
+                            <th class="px-4 py-3 text-center font-medium">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-white/5" id="sessions-table-body">
+                        <!-- Rendered by app.js -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="px-6 py-3 border-t border-white/10 text-xs text-slate-500 text-center" id="sessions-empty">
+                No work sessions logged yet. Click "Log Work Session" to get started.
+            </div>
+        </section>
+    </div>
+
+    <!-- Log Work Session Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="session-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="session-modal-backdrop"></div>
+        <div class="relative w-full max-w-md bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white" id="session-modal-title">Log Work Session</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-session-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <form id="session-form" class="p-6 space-y-4">
+                <input type="hidden" id="session-edit-id">
+                <div>
+                    <label for="session-date" class="block text-sm font-medium text-slate-400 mb-2">Date</label>
+                    <input type="date" id="session-date" required
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <!-- Time entry mode toggle -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Time Entry</label>
+                    <div class="flex gap-2 mb-3">
+                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors time-mode-btn active" data-mode="duration" id="mode-duration-btn">
+                            Duration
+                        </button>
+                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors time-mode-btn" data-mode="range" id="mode-range-btn">
+                            Start/End Time
+                        </button>
+                    </div>
+                </div>
+                <!-- Duration input -->
+                <div id="duration-input-group">
+                    <label for="session-duration" class="block text-sm font-medium text-slate-400 mb-2">Duration (hours)</label>
+                    <input type="number" id="session-duration" step="0.25" min="0.25" placeholder="e.g., 2.5"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <!-- Start/End time inputs -->
+                <div id="range-input-group" class="hidden space-y-4">
+                    <div>
+                        <label for="session-start" class="block text-sm font-medium text-slate-400 mb-2">Start Time</label>
+                        <input type="time" id="session-start"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                    <div>
+                        <label for="session-end" class="block text-sm font-medium text-slate-400 mb-2">End Time</label>
+                        <input type="time" id="session-end"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="session-type" class="block text-sm font-medium text-slate-400 mb-2">Type</label>
+                        <select id="session-type" required
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
+                            <option value="project">Project</option>
+                            <option value="task">Task</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="session-rate" class="block text-sm font-medium text-slate-400 mb-2">Hourly Rate ($)</label>
+                        <input type="number" id="session-rate" step="0.01" min="0.01"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                </div>
+                <div>
+                    <label for="session-project-id" class="block text-sm font-medium text-slate-400 mb-2">Project/Task ID (optional)</label>
+                    <input type="text" id="session-project-id" placeholder="e.g., DA-12345"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <div>
+                    <label for="session-notes" class="block text-sm font-medium text-slate-400 mb-2">Notes (optional)</label>
+                    <input type="text" id="session-notes" placeholder="What did you work on?"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-violet-600/25 hover:shadow-violet-600/40">
+                    Save Session
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Payment Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="payment-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="payment-modal-backdrop"></div>
+        <div class="relative w-full max-w-md bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white" id="payment-modal-title">Create Payment</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-payment-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <form id="payment-form" class="p-6 space-y-4">
+                <input type="hidden" id="payment-edit-id">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Select Work Sessions</label>
+                    <div class="max-h-48 overflow-y-auto bg-white/5 border border-white/10 rounded-xl p-2 space-y-1" id="payment-session-list">
+                        <!-- Checkboxes rendered by app.js -->
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="payment-amount" class="block text-sm font-medium text-slate-400 mb-2">Amount ($)</label>
+                        <input type="number" id="payment-amount" step="0.01" required
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                    <div>
+                        <label for="payment-type" class="block text-sm font-medium text-slate-400 mb-2">Type</label>
+                        <select id="payment-type" required
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
+                            <option value="project">Project</option>
+                            <option value="task">Task</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label for="payment-status" class="block text-sm font-medium text-slate-400 mb-2">Status</label>
+                    <select id="payment-status" required
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
+                        <option value="submitted">Submitted</option>
+                        <option value="pending_payout">Pending Payout</option>
+                        <option value="paid_out">Paid Out</option>
+                        <option value="transferring">Transferring</option>
+                        <option value="in_bank">In Bank</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="payment-notes" class="block text-sm font-medium text-slate-400 mb-2">Notes (optional)</label>
+                    <input type="text" id="payment-notes" placeholder="e.g., Week of Jan 20"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-violet-600/25 hover:shadow-violet-600/40">
+                    Save Payment
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Goal Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="goal-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="goal-modal-backdrop"></div>
+        <div class="relative w-full max-w-md bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white" id="goal-modal-title">Create Savings Goal</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-goal-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <form id="goal-form" class="p-6 space-y-4">
+                <input type="hidden" id="goal-edit-id">
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="col-span-2">
+                        <label for="goal-name" class="block text-sm font-medium text-slate-400 mb-2">Goal Name</label>
+                        <input type="text" id="goal-name" required maxlength="40" placeholder="e.g., Disney Passes"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                    <div>
+                        <label for="goal-icon" class="block text-sm font-medium text-slate-400 mb-2">Icon</label>
+                        <input type="text" id="goal-icon" required maxlength="2" placeholder="🎯"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white text-center text-2xl focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                </div>
+                <div>
+                    <label for="goal-target" class="block text-sm font-medium text-slate-400 mb-2">Target Amount ($)</label>
+                    <input type="number" id="goal-target" step="0.01" min="1" required placeholder="1500.00"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40">
+                    Create Goal
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Allocate Funds Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="allocate-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="allocate-modal-backdrop"></div>
+        <div class="relative w-full max-w-md bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white">Allocate Funds</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-allocate-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <form id="allocate-form" class="p-6 space-y-4">
+                <input type="hidden" id="allocate-goal-id">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Goal</label>
+                    <div class="text-white font-medium" id="allocate-goal-name">-</div>
+                </div>
+                <div>
+                    <label for="allocate-amount" class="block text-sm font-medium text-slate-400 mb-2">Amount ($)</label>
+                    <input type="number" id="allocate-amount" step="0.01" min="0.01" required
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <div>
+                    <label for="allocate-payment" class="block text-sm font-medium text-slate-400 mb-2">From Payment (optional)</label>
+                    <select id="allocate-payment"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
+                        <option value="">-- No specific payment --</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="allocate-notes" class="block text-sm font-medium text-slate-400 mb-2">Notes (optional)</label>
+                    <input type="text" id="allocate-notes" placeholder="e.g., From January earnings"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                </div>
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40">
+                    Allocate Funds
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="settings-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="settings-modal-backdrop"></div>
+        <div class="relative w-full max-w-lg max-h-[90vh] bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content flex flex-col">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white">Settings</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-settings-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-6 overflow-y-auto flex-1">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Google Apps Script URL</label>
+                    <input type="url" id="settings-sheets-url"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors text-sm"
+                        placeholder="https://script.google.com/macros/s/...">
+                    <p class="text-xs text-slate-500 mt-1">Your Apps Script deployment URL for syncing</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Default Hourly Rate ($)</label>
+                        <input type="number" id="settings-hourly-rate" step="0.01" min="0.01"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Tax Rate (%)</label>
+                        <input type="number" id="settings-tax-rate" step="1" min="0" max="100"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Project Payout (hrs)</label>
+                        <input type="number" id="settings-project-hours" step="1" min="1"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">Task Payout (hrs)</label>
+                        <input type="number" id="settings-task-hours" step="1" min="1"
+                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                    </div>
+                </div>
+                <div>
+                    <button type="button" id="settings-save-btn"
+                        class="w-full py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-violet-600/25 hover:shadow-violet-600/40">
+                        Save Settings
+                    </button>
+                </div>
+                <div class="border-t border-white/10 pt-4">
+                    <h4 class="text-sm font-medium text-slate-400 mb-3">Export Data</h4>
+                    <div class="flex gap-2">
+                        <button type="button" id="export-sessions-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Work Sessions</button>
+                        <button type="button" id="export-payments-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Payments</button>
+                        <button type="button" id="export-tax-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Tax Summary</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="fixed inset-0 z-[100] hidden items-center justify-center bg-slate-950/80 backdrop-blur-sm" id="loading">
+        <div class="flex flex-col items-center gap-4">
+            <div class="w-12 h-12 border-4 border-violet-600/30 border-t-violet-600 rounded-full animate-spin"></div>
+            <p class="text-slate-400">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Google Sign-In Modal -->
+    <div class="fixed inset-0 z-[150] hidden items-center justify-center p-4" id="auth-modal">
+        <div class="absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
+        <div class="relative w-full max-w-sm bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content">
+            <div class="p-8 text-center">
+                <h1 class="text-2xl font-bold bg-gradient-to-r from-violet-400 via-cyan-400 to-violet-400 bg-clip-text text-transparent mb-2">
+                    Hours Worked Tracker
+                </h1>
+                <p class="text-sm text-slate-400 mb-8">Sign in to sync your data</p>
+
+                <button id="google-sign-in-btn"
+                    class="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white hover:bg-slate-100 text-slate-800 font-medium rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    <span>Sign in with Google</span>
+                </button>
+
+                <div id="auth-error" class="hidden mt-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-sm text-red-400">
+                    <span id="auth-error-text"></span>
+                </div>
+
+                <button id="skip-auth-btn" class="mt-4 text-sm text-slate-500 hover:text-slate-300 transition-colors">
+                    Continue offline
+                </button>
+
+                <p class="text-xs text-slate-500 mt-4">Your data syncs to your own Google Sheet</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="fixed bottom-4 right-4 z-[200] flex flex-col gap-2" id="toast-container"></div>
+
+    <script src="js/config.js"></script>
+    <script src="js/firebase-auth.js"></script>
+    <script src="js/sheets-api.js"></script>
+    <script src="js/tax-calc.js"></script>
+    <script src="js/pipeline.js"></script>
+    <script src="js/goals.js"></script>
+    <script src="js/app.js"></script>
+
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then((registration) => {
+                        console.log('SW registered:', registration.scope);
+                    })
+                    .catch((error) => {
+                        console.log('SW registration failed:', error);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>

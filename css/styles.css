@@ -1,0 +1,262 @@
+/* Hours Worked Tracker - Custom Styles */
+/* Tailwind handles most styling */
+
+/* ============ LIGHT MODE OVERRIDES ============ */
+
+body.light-mode {
+    background-color: #f8fafc !important;
+    color: #1e293b !important;
+}
+
+body.light-mode #bg-gradient {
+    display: none;
+}
+
+body.light-mode .card {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+    backdrop-filter: none !important;
+}
+
+body.light-mode .card:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+body.light-mode .modal-content {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+}
+
+body.light-mode .text-white {
+    color: #1e293b !important;
+}
+
+body.light-mode .text-slate-100 {
+    color: #1e293b !important;
+}
+
+body.light-mode .text-slate-400 {
+    color: #64748b !important;
+}
+
+body.light-mode .text-slate-500 {
+    color: #64748b !important;
+}
+
+body.light-mode input[type="text"],
+body.light-mode input[type="number"],
+body.light-mode input[type="date"],
+body.light-mode input[type="time"],
+body.light-mode input[type="url"],
+body.light-mode select,
+body.light-mode textarea {
+    background-color: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+}
+
+body.light-mode input::placeholder,
+body.light-mode textarea::placeholder {
+    color: #94a3b8 !important;
+}
+
+body.light-mode #loading {
+    background-color: rgba(248, 250, 252, 0.8) !important;
+}
+
+body.light-mode #loading p {
+    color: #64748b !important;
+}
+
+body.light-mode h1 {
+    background-image: linear-gradient(to right, #7c3aed, #06b6d4, #7c3aed) !important;
+}
+
+body.light-mode .progress-bar-bg {
+    background-color: #e2e8f0 !important;
+}
+
+body.light-mode .hover\:bg-white\/10:hover {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+body.light-mode .divide-white\/5 > * + * {
+    border-color: #f1f5f9 !important;
+}
+
+body.light-mode .border-white\/10 {
+    border-color: #e2e8f0 !important;
+}
+
+body.light-mode #theme-toggle:hover,
+body.light-mode #settings-btn:hover {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* ============ SCROLLBAR ============ */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+body.light-mode ::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body.light-mode ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+}
+
+/* ============ INPUT STYLING ============ */
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+}
+
+body.light-mode input[type="date"]::-webkit-calendar-picker-indicator,
+body.light-mode input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.3);
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+/* ============ TOAST ANIMATIONS ============ */
+
+@keyframes toast-slide-in {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes toast-slide-out {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+
+.toast-enter {
+    animation: toast-slide-in 0.3s ease-out forwards;
+}
+
+.toast-exit {
+    animation: toast-slide-out 0.3s ease-in forwards;
+}
+
+/* ============ PROGRESS BAR ============ */
+
+.progress-gradient {
+    background: linear-gradient(90deg, #7c3aed, #06b6d4);
+}
+
+/* ============ PIPELINE STAGE COLORS ============ */
+
+.pipeline-submitted {
+    border-color: #eab308 !important;
+    background: linear-gradient(135deg, rgba(234, 179, 8, 0.1), transparent);
+}
+
+.pipeline-pending_payout {
+    border-color: #f97316 !important;
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.1), transparent);
+}
+
+.pipeline-paid_out {
+    border-color: #3b82f6 !important;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), transparent);
+}
+
+.pipeline-transferring {
+    border-color: #06b6d4 !important;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), transparent);
+}
+
+.pipeline-in_bank {
+    border-color: #22c55e !important;
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), transparent);
+}
+
+/* Pipeline stage dots */
+.pipeline-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.pipeline-dot.active {
+    box-shadow: 0 0 8px currentColor;
+}
+
+.pipeline-connector {
+    height: 2px;
+    flex: 1;
+    transition: background-color 0.3s ease;
+}
+
+/* ============ GOAL CARD ============ */
+
+.goal-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.goal-card:hover {
+    transform: translateY(-2px);
+}
+
+/* ============ THEME TRANSITION ============ */
+
+body {
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.card, .modal-content, input, select, textarea {
+    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+}
+
+#sync-indicator {
+    transition: color 0.3s ease;
+}
+
+/* ============ TABLE ============ */
+
+.session-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+body.light-mode .session-table th {
+    background-color: #f1f5f9 !important;
+}
+
+body.light-mode .session-table tr:hover td {
+    background-color: #f8fafc !important;
+}

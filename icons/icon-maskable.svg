@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#020617"/>
+    </linearGradient>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/>
+      <stop offset="50%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a78bfa"/>
+      <stop offset="100%" style="stop-color:#22d3ee"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!--
+    Maskable icon: full bleed background with safe zone inset.
+    The safe zone for maskable icons is the inner 80% circle (r=204.8 from center).
+    All meaningful content stays within ~r=200 from center (256,256).
+  -->
+  <!-- Full bleed background - fills entire canvas -->
+  <rect x="0" y="0" width="512" height="512" fill="url(#bgGrad)"/>
+  <!-- Ambient glow behind clock -->
+  <circle cx="256" cy="220" r="80" fill="#8b5cf6" opacity="0.06"/>
+  <!-- Clock circle (smaller for safe zone padding) -->
+  <circle cx="256" cy="216" r="88" fill="none" stroke="url(#iconGrad)" stroke-width="8" stroke-linecap="round" filter="url(#glow)"/>
+  <!-- Clock center dot -->
+  <circle cx="256" cy="216" r="6" fill="url(#iconGrad)"/>
+  <!-- Hour hand (pointing to ~10 o'clock) -->
+  <line x1="256" y1="216" x2="226" y2="174" stroke="url(#iconGrad)" stroke-width="8" stroke-linecap="round"/>
+  <!-- Minute hand (pointing to ~2 o'clock) -->
+  <line x1="256" y1="216" x2="294" y2="190" stroke="url(#iconGrad)" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- Tick marks at 12, 3, 6, 9 -->
+  <line x1="256" y1="134" x2="256" y2="146" stroke="#8b5cf6" stroke-width="4" stroke-linecap="round"/>
+  <line x1="338" y1="216" x2="326" y2="216" stroke="#8b5cf6" stroke-width="4" stroke-linecap="round"/>
+  <line x1="256" y1="298" x2="256" y2="286" stroke="#06b6d4" stroke-width="4" stroke-linecap="round"/>
+  <line x1="174" y1="216" x2="186" y2="216" stroke="#06b6d4" stroke-width="4" stroke-linecap="round"/>
+  <!-- Minor tick marks -->
+  <line x1="290" y1="139" x2="286" y2="147" stroke="#7c3aed" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="318" y1="165" x2="312" y2="171" stroke="#7c3aed" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="333" y1="182" x2="326" y2="186" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="333" y1="250" x2="326" y2="246" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="318" y1="267" x2="312" y2="261" stroke="#0891b2" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="222" y1="293" x2="226" y2="285" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="194" y1="267" x2="200" y2="261" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="179" y1="182" x2="186" y2="186" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="194" y1="165" x2="200" y2="171" stroke="#8b5cf6" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="222" y1="139" x2="226" y2="147" stroke="#8b5cf6" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <!-- Dollar sign accent -->
+  <text x="348" y="158" font-family="Inter, system-ui, sans-serif" font-size="30" font-weight="700" fill="#22d3ee" opacity="0.45">$</text>
+  <!-- HWT text -->
+  <text x="256" y="385" font-family="Inter, system-ui, sans-serif" font-size="60" font-weight="700" fill="url(#textGrad)" text-anchor="middle" letter-spacing="8">HWT</text>
+</svg>

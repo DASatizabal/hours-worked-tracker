@@ -1,0 +1,32 @@
+{
+  "name": "Hours Worked Tracker",
+  "short_name": "HoursTracker",
+  "description": "Track DataAnnotation work hours, earnings, taxes, and savings goals",
+  "start_url": "/hours-worked-tracker/",
+  "scope": "/hours-worked-tracker/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0f172a",
+  "background_color": "#020617",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
