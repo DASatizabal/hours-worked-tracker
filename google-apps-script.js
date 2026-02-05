@@ -1,7 +1,8 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
+ * VERSION: 1.5.1
  *
- * Supports 6-tab CRUD + Gmail email parsing for DA/PayPal payouts.
+ * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
  * SETUP: See SETUP.md for full instructions.
  */
