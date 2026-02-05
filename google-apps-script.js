@@ -429,3 +429,23 @@ function checkTriggerStatus() {
     });
   }
 }
+
+// ============ Data Cleanup Utilities ============
+
+// Add missing IDs to WorkSessions rows (useful after manual data entry)
+function addMissingIds() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('WorkSessions');
+  var data = sheet.getDataRange().getValues();
+  var idCol = data[0].indexOf('ID');
+  var count = 0;
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][idCol]) {
+      var id = 'ws_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sheet.getRange(i + 1, idCol + 1).setValue(id);
+      count++;
+      Utilities.sleep(10); // ensure unique timestamps
+    }
+  }
+  Logger.log('Added IDs to ' + count + ' rows');
+}
