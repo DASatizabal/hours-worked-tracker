@@ -1,5 +1,5 @@
 # Hours Worked Tracker - Setup Guide
-**Current Version: v1.4.1**
+**Current Version: v1.5.0**
 
 ## 1. Firebase Setup (Google Sign-In)
 
@@ -15,17 +15,16 @@
 
 1. Create a new Google Sheet
 2. Copy the Sheet ID from the URL: `https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE/edit`
-3. The sheet needs **6 tabs**. You can create them manually or use the Apps Script `initializeTabs()` function:
+3. The sheet needs **5 tabs**. You can create them manually or use the Apps Script `initializeTabs()` function:
 
 ### Tab Headers
 
 | Tab | Headers |
 |-----|---------|
-| **WorkSessions** | Date, StartTime, EndTime, Duration, Type, ProjectID, Notes, HourlyRate, Earnings, SubmittedAt, ID |
-| **Payments** | Amount, Tax, NetAmount, Type, Status, SubmittedAt, PayoutExpectedAt, PaidOutAt, DAPaymentId, TransferExpectedAt, TransferredAt, PaypalTransactionId, InBankAt, Notes, WorkSessionIds, ID |
+| **WorkSessions** | Date, Duration, Type, ProjectID, Notes, HourlyRate, Earnings, SubmittedAt, ID |
 | **Goals** | Name, Icon, TargetAmount, SavedAmount, CreatedAt, CompletedAt, ID |
 | **GoalAllocations** | GoalId, PaymentId, Amount, Date, Notes, ID |
-| **EmailPayouts** | Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, Matched, PaymentId, ID |
+| **EmailPayouts** | Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, EstimatedArrival, ID |
 | **Settings** | Key, Value |
 
 ## 3. Google Apps Script Deployment
@@ -106,7 +105,7 @@ All settings can be changed in the app's **Settings** modal.
 ## Verification Checklist
 
 - [X] Firebase project created, Google Auth enabled
-- [X] Google Sheet created with 6 tabs
+- [X] Google Sheet created with 5 tabs
 - [X] Apps Script deployed, URL pasted into config/settings
 - [ ] Sign in works (Google popup)
 - [ ] Log a work session -> appears in dashboard and table

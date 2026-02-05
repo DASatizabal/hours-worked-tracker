@@ -1,5 +1,5 @@
-// Payment Pipeline State Machine
-// Manages payment lifecycle: submitted -> pending_payout -> paid_out -> transferring -> in_bank
+// Payment Pipeline - Email-based tracking
+// Calculates pipeline stages from work sessions + email payouts
 
 const Pipeline = {
     STAGES: ['submitted', 'pending_payout', 'paid_out', 'transferring', 'in_bank'],
@@ -23,128 +23,97 @@ const Pipeline = {
     STAGE_ICONS: {
         submitted: 'send',
         pending_payout: 'clock',
-        paid_out: 'check-circle',
+        paid_out: 'wallet',
         transferring: 'arrow-right-left',
         in_bank: 'landmark'
     },
 
-    // Create a new payment from work sessions
-    createPayment(workSessionIds, amount, type, submittedAt) {
-        const subAt = submittedAt || new Date().toISOString();
-        const payoutHours = type === 'project' ? CONFIG.PROJECT_PAYOUT_HOURS : CONFIG.TASK_PAYOUT_HOURS;
-        const payoutExpected = new Date(new Date(subAt).getTime() + payoutHours * 60 * 60 * 1000).toISOString();
-
-        return {
-            workSessionIds: workSessionIds.join(','),
-            amount: amount,
-            tax: TaxCalc.calcTax(amount),
-            netAmount: TaxCalc.calcNet(amount),
-            type: type,
-            status: 'submitted',
-            submittedAt: subAt,
-            payoutExpectedAt: payoutExpected,
-            paidOutAt: '',
-            daPaymentId: '',
-            transferExpectedAt: '',
-            transferredAt: '',
-            paypalTransactionId: '',
-            inBankAt: '',
-            notes: ''
-        };
-    },
-
-    // Auto-advance payments based on timers
-    autoAdvance(payments) {
+    // Calculate pipeline totals from work sessions and email payouts
+    calculateTotals(workSessions, emailPayouts) {
         const now = new Date();
-        let changed = false;
+        const totals = {
+            submitted: 0,
+            pending_payout: 0,
+            paid_out: 0,
+            transferring: 0,
+            in_bank: 0
+        };
 
-        payments.forEach(p => {
-            if (p.status === 'submitted' && p.payoutExpectedAt) {
-                if (now >= new Date(p.payoutExpectedAt)) {
-                    p.status = 'pending_payout';
-                    changed = true;
+        // Calculate Submitted and Available for Payout from work sessions
+        let sessionsStillWaiting = 0;
+        let sessionsPastWaiting = 0;
+
+        workSessions.forEach(s => {
+            const earnings = parseFloat(s.earnings) || 0;
+            if (earnings <= 0) return;
+
+            const submittedAt = s.submittedAt ? new Date(s.submittedAt) : null;
+            if (!submittedAt) {
+                // No submittedAt = treat as past waiting period
+                sessionsPastWaiting += earnings;
+                return;
+            }
+
+            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+            const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+
+            if (now < payoutExpected) {
+                sessionsStillWaiting += earnings;
+            } else {
+                sessionsPastWaiting += earnings;
+            }
+        });
+
+        totals.submitted = sessionsStillWaiting;
+
+        // Calculate email-based totals
+        let daTotal = 0;
+        let transfersCompleted = 0;
+        let transfersInProgress = 0;
+
+        emailPayouts.forEach(e => {
+            const amount = parseFloat(e.amount) || 0;
+            if (amount <= 0) return;
+
+            if (e.source === 'dataannotation') {
+                daTotal += amount;
+            } else if (e.source === 'paypal_transfer') {
+                const estimatedArrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
+                if (estimatedArrival && now >= estimatedArrival) {
+                    transfersCompleted += amount;
+                } else {
+                    transfersInProgress += amount;
                 }
             }
         });
 
-        return changed;
-    },
+        // Available for Payout = sessions past waiting - DA payouts received (min 0)
+        totals.pending_payout = Math.max(0, sessionsPastWaiting - daTotal);
 
-    // Advance a payment to the next status
-    advancePayment(payment, newStatus, extraData) {
-        payment.status = newStatus;
+        // In PayPal = DA payouts - transfers (min 0)
+        totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress);
 
-        if (newStatus === 'paid_out') {
-            payment.paidOutAt = extraData?.paidOutAt || new Date().toISOString();
-            payment.daPaymentId = extraData?.daPaymentId || '';
-            payment.transferExpectedAt = this.calcTransferExpected(payment.paidOutAt);
-        } else if (newStatus === 'transferring') {
-            if (!payment.transferExpectedAt && payment.paidOutAt) {
-                payment.transferExpectedAt = this.calcTransferExpected(payment.paidOutAt);
-            }
-        } else if (newStatus === 'in_bank') {
-            payment.inBankAt = extraData?.inBankAt || new Date().toISOString();
-            payment.paypalTransactionId = extraData?.paypalTransactionId || '';
-            if (!payment.transferredAt) {
-                payment.transferredAt = payment.inBankAt;
-            }
-        }
+        // Transferring = transfers in progress
+        totals.transferring = transfersInProgress;
 
-        return payment;
-    },
+        // In Bank = completed transfers
+        totals.in_bank = transfersCompleted;
 
-    // Calculate transfer expected date (paidOutAt + 3 business days)
-    calcTransferExpected(paidOutAt) {
-        const date = new Date(paidOutAt);
-        let businessDays = 0;
-        while (businessDays < CONFIG.PAYPAL_TRANSFER_BUSINESS_DAYS) {
-            date.setDate(date.getDate() + 1);
-            const day = date.getDay();
-            if (day !== 0 && day !== 6) businessDays++;
-        }
-        return date.toISOString();
-    },
-
-    // Get countdown string for a target date
-    getCountdown(targetDate) {
-        if (!targetDate) return '';
-        const now = new Date();
-        const target = new Date(targetDate);
-        const diff = target - now;
-
-        if (diff <= 0) return 'Due now';
-
-        const hours = Math.floor(diff / (1000 * 60 * 60));
-        const days = Math.floor(hours / 24);
-        const remainingHours = hours % 24;
-
-        if (days > 0) return `${days}d ${remainingHours}h`;
-        return `${hours}h`;
-    },
-
-    // Get payments grouped by stage
-    groupByStage(payments) {
-        const groups = {};
-        this.STAGES.forEach(s => { groups[s] = []; });
-        payments.forEach(p => {
-            if (groups[p.status]) groups[p.status].push(p);
-        });
-        return groups;
+        return totals;
     },
 
     // Render pipeline visualization
-    renderPipeline(payments) {
-        const groups = this.groupByStage(payments);
+    renderPipeline(workSessions, emailPayouts) {
+        const totals = this.calculateTotals(workSessions, emailPayouts);
         const container = document.getElementById('pipeline-stages');
         if (!container) return;
 
         // Stage bar
         let html = '<div class="flex items-center gap-0 mb-6">';
         this.STAGES.forEach((stage, i) => {
-            const count = groups[stage].length;
-            const total = groups[stage].reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+            const total = totals[stage];
             const colors = this.STAGE_COLORS[stage];
-            const isActive = count > 0;
+            const isActive = total > 0;
 
             if (i > 0) {
                 html += `<div class="pipeline-connector flex-1 ${isActive ? 'bg-white/20' : 'bg-white/5'}"></div>`;
@@ -154,8 +123,7 @@ const Pipeline = {
                 <div class="flex flex-col items-center min-w-[80px]">
                     <div class="pipeline-dot ${isActive ? 'active' : ''}" style="background-color: ${isActive ? colors.dot : 'rgba(255,255,255,0.1)'}; color: ${colors.dot};"></div>
                     <div class="text-xs ${isActive ? colors.text : 'text-slate-600'} mt-2 font-medium text-center">${this.STAGE_LABELS[stage]}</div>
-                    <div class="text-sm font-bold ${isActive ? 'text-white' : 'text-slate-700'} mt-1">$${total.toFixed(0)}</div>
-                    <div class="text-xs ${isActive ? 'text-slate-400' : 'text-slate-700'}">${count} item${count !== 1 ? 's' : ''}</div>
+                    <div class="text-sm font-bold ${isActive ? 'text-white' : 'text-slate-700'} mt-1">$${total.toFixed(2)}</div>
                 </div>
             `;
         });
@@ -164,63 +132,66 @@ const Pipeline = {
         container.innerHTML = html;
 
         // Details section
-        this.renderDetails(groups);
+        this.renderDetails(totals, emailPayouts);
     },
 
-    renderDetails(groups) {
+    renderDetails(totals, emailPayouts) {
         const container = document.getElementById('pipeline-details');
         if (!container) return;
 
+        const now = new Date();
         let html = '';
 
-        this.STAGES.forEach(stage => {
-            const payments = groups[stage];
-            if (payments.length === 0) return;
+        // Show recent email payouts as detail items
+        const recentEmails = emailPayouts
+            .filter(e => e.source === 'dataannotation' || e.source === 'paypal_transfer')
+            .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
+            .slice(0, 10);
 
-            const colors = this.STAGE_COLORS[stage];
-            html += `<div class="mb-4">
-                <h4 class="text-sm font-medium ${colors.text} mb-2">${this.STAGE_LABELS[stage]} (${payments.length})</h4>
-                <div class="space-y-2">`;
+        if (recentEmails.length > 0) {
+            html += '<div class="mb-4"><h4 class="text-sm font-medium text-slate-400 mb-2">Recent Activity</h4><div class="space-y-2">';
 
-            payments.forEach(p => {
-                let countdown = '';
-                if (stage === 'submitted') {
-                    countdown = this.getCountdown(p.payoutExpectedAt);
-                } else if (stage === 'paid_out' || stage === 'transferring') {
-                    countdown = this.getCountdown(p.transferExpectedAt);
+            recentEmails.forEach(e => {
+                const amount = parseFloat(e.amount) || 0;
+                let stage, label;
+
+                if (e.source === 'dataannotation') {
+                    stage = 'paid_out';
+                    label = 'DA Payout';
+                } else if (e.source === 'paypal_transfer') {
+                    const estimatedArrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
+                    if (estimatedArrival && now >= estimatedArrival) {
+                        stage = 'in_bank';
+                        label = 'Bank Transfer';
+                    } else {
+                        stage = 'transferring';
+                        label = 'Transferring';
+                    }
                 }
 
-                const countdownHTML = countdown ? `<span class="text-xs text-slate-500 ml-2">${countdown}</span>` : '';
+                const colors = this.STAGE_COLORS[stage];
+                const date = e.receivedAt ? new Date(e.receivedAt).toLocaleDateString() : '';
 
                 html += `
                     <div class="flex items-center justify-between p-3 rounded-lg ${colors.bg} border ${colors.border}">
                         <div class="flex items-center gap-3">
                             <i data-lucide="${this.STAGE_ICONS[stage]}" class="w-4 h-4 ${colors.text}"></i>
                             <div>
-                                <span class="text-sm font-medium text-white">$${(parseFloat(p.amount) || 0).toFixed(2)}</span>
-                                <span class="text-xs text-slate-400 ml-2 capitalize">${p.type}</span>
-                                ${countdownHTML}
+                                <span class="text-sm font-medium text-white">$${amount.toFixed(2)}</span>
+                                <span class="text-xs text-slate-400 ml-2">${label}</span>
                             </div>
                         </div>
-                        <div class="flex items-center gap-2">
-                            ${stage !== 'in_bank' ? `
-                                <button class="text-xs px-2 py-1 ${colors.bg} ${colors.text} border ${colors.border} rounded-lg hover:opacity-80 transition-opacity" onclick="App.advancePayment('${p.id}')">
-                                    Advance
-                                </button>
-                            ` : ''}
-                            <button class="text-xs px-2 py-1 bg-white/5 text-slate-400 rounded-lg hover:text-white transition-colors" onclick="App.editPayment('${p.id}')">
-                                Edit
-                            </button>
-                        </div>
+                        <span class="text-xs text-slate-500">${date}</span>
                     </div>
                 `;
             });
 
             html += '</div></div>';
-        });
+        }
 
-        if (html === '') {
-            html = '<p class="text-sm text-slate-500 text-center py-4">No payments in pipeline yet. Create a payment from your work sessions.</p>';
+        const totalPipeline = Object.values(totals).reduce((a, b) => a + b, 0);
+        if (totalPipeline === 0 && recentEmails.length === 0) {
+            html = '<p class="text-sm text-slate-500 text-center py-4">No activity in pipeline yet. Log work sessions and scan emails to track payments.</p>';
         }
 
         container.innerHTML = html;

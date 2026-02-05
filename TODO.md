@@ -3,11 +3,26 @@
 ## Priority: Deploy & Verify (USER ACTION NEEDED)
 - [x] Deploy updated camelCase function to Apps Script editor & redeploy — confirmed deployed
 - [x] Verify Google Sheets sync end-to-end — ID and ProjectID columns working (Test 1 passed)
-- [ ] **Deploy v1.4.0 google-apps-script.js to Apps Script editor & redeploy** (NEW)
-  - Adds PayPal transfer email scanning
-  - Auto-creates payments from DA payout emails
-  - Fixes PayPal receipt email behavior
+- [ ] **Deploy v1.5.0 google-apps-script.js to Apps Script editor & redeploy** (MAJOR UPDATE)
+  - Removes Payments tab (pipeline now calculated from WorkSessions + EmailPayouts)
+  - Removes StartTime, EndTime columns from WorkSessions
+  - Adds EstimatedArrival column to EmailPayouts
+  - Simplified email scanning (no more matching logic)
+- [ ] **Update Google Sheet tabs** after deploying:
+  - Remove StartTime, EndTime columns from WorkSessions tab
+  - Remove Payments tab (optional - can keep for historical data)
+  - Add EstimatedArrival column to EmailPayouts tab (after PaypalTransactionId, before ID)
 - [ ] Clean up old manually-entered data — remove test entries, verify all have IDs
+
+## v1.5.0 Pipeline Overhaul (COMPLETED)
+- [x] Rewrite pipeline logic to calculate from work sessions + email payouts instead of Payments table
+- [x] Submitted = work sessions where payout time hasn't elapsed yet
+- [x] Available for Payout = work sessions past time - DA email totals
+- [x] In PayPal = DA email totals - PayPal transfer totals
+- [x] Transferring = PayPal transfers where estimated arrival > now
+- [x] In Bank = PayPal transfers where estimated arrival <= now
+- [x] Remove matching logic - amounts move independently based on emails
+- [x] Parse estimated arrival date from PayPal transfer emails
 
 ## Testing: New Form (USER ACTION NEEDED)
 - [x] Test Project work type — amount + hours/min + auto hourly rate calculation (Test 2 passed)
@@ -20,13 +35,6 @@
 - [x] Change "This Week's Earnings" to "Total Amount to be Paid" — shows total earnings minus payments in "In Bank" status (v1.3.0)
 - [x] Tax card label now dynamically shows configured tax rate instead of hardcoded "35%" (v1.3.2)
 - [x] Dashboard math verified accurate (Test 5 passed)
-
-## Payment Pipeline
-- [x] Fix pipeline $0 display — added `parseFloat()` to payment amounts in pipeline rendering (v1.3.1)
-- [x] Auto-create payment records from DA payout emails when pipeline is empty (v1.4.0)
-- [x] Add PayPal "Your transfer request is processing" email scanning → advances to `transferring` (v1.4.0)
-- [x] Fix PayPal "You have a new payout!" behavior — now only adds transaction ID, doesn't wrongly advance to in_bank (v1.4.0)
-- [ ] Test payment pipeline after deploying v1.4.0 Apps Script
 
 ## Goal Icon Picker
 - [x] Change "New Goal" icon input — popup grid of 48 common emoji icons (v1.3.0)

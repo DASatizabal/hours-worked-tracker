@@ -11,11 +11,10 @@ const SHEET_ID = '1y1Jjk056nBMP99c_N1YIeUDG3-kpYqmnctydOnZtcbE';
 
 // Tab configurations: column headers for each tab
 const TABS = {
-  WorkSessions: ['Date', 'StartTime', 'EndTime', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'ID'],
-  Payments: ['Amount', 'Tax', 'NetAmount', 'Type', 'Status', 'SubmittedAt', 'PayoutExpectedAt', 'PaidOutAt', 'DAPaymentId', 'TransferExpectedAt', 'TransferredAt', 'PaypalTransactionId', 'InBankAt', 'Notes', 'WorkSessionIds', 'ID'],
+  WorkSessions: ['Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'ID'],
   Goals: ['Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
   GoalAllocations: ['GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
-  EmailPayouts: ['Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'Matched', 'PaymentId', 'ID'],
+  EmailPayouts: ['Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
   Settings: ['Key', 'Value']
 };
 
@@ -155,10 +154,10 @@ function deleteRecord(tab, id) {
 // ============ Email Scanning ============
 
 function scanEmails() {
-  const results = { daPayouts: 0, paypalReceipts: 0, paypalTransfers: 0, matched: 0, errors: [] };
+  const results = { daPayouts: 0, paypalTransfers: 0, newRecords: 0, errors: [] };
 
   try {
-    // Scan DA payout emails (last 30 days)
+    // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout!" newer_than:30d', 0, 50);
     const daPayouts = [];
 
@@ -172,24 +171,6 @@ function scanEmails() {
           }
         } catch (err) {
           results.errors.push('DA parse error: ' + err.message);
-        }
-      });
-    });
-
-    // Scan PayPal receipt emails (last 30 days) - confirms PayPal received DA funds
-    const ppThreads = GmailApp.search('from:service@paypal.com subject:"You have a new payout!" newer_than:30d', 0, 50);
-    const ppReceipts = [];
-
-    ppThreads.forEach(thread => {
-      thread.getMessages().forEach(msg => {
-        try {
-          const parsed = parsePayPalEmail(msg);
-          if (parsed) {
-            ppReceipts.push(parsed);
-            results.paypalReceipts++;
-          }
-        } catch (err) {
-          results.errors.push('PayPal parse error: ' + err.message);
         }
       });
     });
@@ -212,34 +193,25 @@ function scanEmails() {
       });
     });
 
-    // Save to EmailPayouts tab and match with Payments
+    // Save to EmailPayouts tab
     const sheet = SpreadsheetApp.openById(SHEET_ID);
     const emailSheet = sheet.getSheetByName('EmailPayouts');
-    const paymentSheet = sheet.getSheetByName('Payments');
 
-    if (!emailSheet || !paymentSheet) {
-      results.errors.push('Missing EmailPayouts or Payments tab');
+    if (!emailSheet) {
+      results.errors.push('Missing EmailPayouts tab');
       return { results };
     }
 
     // Get existing email payouts to avoid duplicates
     const existingEmails = getExistingEmailPayouts(emailSheet);
 
-    // Save DA payouts
+    // Save DA payouts: Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, EstimatedArrival, ID
     daPayouts.forEach(dp => {
       if (!existingEmails.has(dp.daPaymentId + '_da')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['dataannotation', dp.daPaymentId, dp.amount, dp.receivedAt, '', false, '', id]);
+        emailSheet.appendRow(['dataannotation', dp.daPaymentId, dp.amount, dp.receivedAt, '', '', id]);
         existingEmails.set(dp.daPaymentId + '_da', id);
-      }
-    });
-
-    // Save PayPal receipts
-    ppReceipts.forEach(pp => {
-      if (!existingEmails.has(pp.paypalTransactionId + '_pp')) {
-        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['paypal', pp.daPaymentId || '', pp.amount, pp.receivedAt, pp.paypalTransactionId, false, '', id]);
-        existingEmails.set(pp.paypalTransactionId + '_pp', id);
+        results.newRecords++;
       }
     });
 
@@ -247,13 +219,11 @@ function scanEmails() {
     ppTransfers.forEach(pt => {
       if (!existingEmails.has(pt.paypalTransactionId + '_pptx')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['paypal_transfer', '', pt.amount, pt.receivedAt, pt.paypalTransactionId, false, '', id]);
+        emailSheet.appendRow(['paypal_transfer', '', pt.amount, pt.receivedAt, pt.paypalTransactionId, pt.estimatedArrival || '', id]);
         existingEmails.set(pt.paypalTransactionId + '_pptx', id);
+        results.newRecords++;
       }
     });
-
-    // Match and advance pipeline (with auto-create for unmatched DA payouts)
-    results.matched = matchAndAdvancePipeline(paymentSheet, emailSheet, daPayouts, ppReceipts, ppTransfers);
 
   } catch (error) {
     results.errors.push('Scan error: ' + error.message);
@@ -285,37 +255,6 @@ function parseDAPayoutEmail(msg) {
   };
 }
 
-function parsePayPalEmail(msg) {
-  const body = msg.getPlainBody() || msg.getBody();
-  const date = msg.getDate().toISOString();
-
-  // Extract amount
-  const amountMatch = body.match(/\$([0-9,]+\.?\d*)/);
-  const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
-
-  // Extract PayPal transaction ID
-  const txnMatch = body.match(/transaction\s*(?:id|#|ID)[:\s]*([A-Za-z0-9]+)/i);
-  const paypalTransactionId = txnMatch ? txnMatch[1] : 'pp_' + msg.getId();
-
-  // Extract DA payment ID from note field
-  const noteMatch = body.match(/note[:\s]*(.*?)(?:\n|$)/i);
-  let daPaymentId = '';
-  if (noteMatch) {
-    const noteIdMatch = noteMatch[1].match(/([A-Za-z0-9]{8,})/);
-    if (noteIdMatch) daPaymentId = noteIdMatch[1];
-  }
-
-  if (amount <= 0) return null;
-
-  return {
-    source: 'paypal',
-    daPaymentId,
-    amount,
-    receivedAt: date,
-    paypalTransactionId
-  };
-}
-
 function parsePayPalTransferEmail(msg) {
   const body = msg.getPlainBody() || msg.getBody();
   const date = msg.getDate().toISOString();
@@ -329,162 +268,47 @@ function parsePayPalTransferEmail(msg) {
   const txnMatch = body.match(/Transaction\s*ID[:\s]*([A-Za-z0-9]+)/i);
   const paypalTransactionId = txnMatch ? txnMatch[1] : 'pptx_' + msg.getId();
 
+  // Extract estimated arrival (e.g., "by February 4" or "in 1 business day")
+  let estimatedArrival = '';
+  const arrivalMatch = body.match(/by\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+  if (arrivalMatch) {
+    const months = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 };
+    const month = months[arrivalMatch[1].toLowerCase()];
+    const day = parseInt(arrivalMatch[2]);
+    const year = new Date().getFullYear();
+    const arrivalDate = new Date(year, month, day);
+    // If the date is in the past, assume next year
+    if (arrivalDate < new Date()) arrivalDate.setFullYear(year + 1);
+    estimatedArrival = arrivalDate.toISOString();
+  } else {
+    // Fallback: estimate 1 business day from email date
+    estimatedArrival = addBusinessDays(new Date(date), 1).toISOString();
+  }
+
   if (amount <= 0) return null;
 
   return {
     source: 'paypal_transfer',
     amount,
     receivedAt: date,
-    paypalTransactionId
+    paypalTransactionId,
+    estimatedArrival
   };
 }
 
 function getExistingEmailPayouts(emailSheet) {
+  // Column indices: Source=0, DAPaymentId=1, Amount=2, ReceivedAt=3, PaypalTransactionId=4, EstimatedArrival=5, ID=6
   const existing = new Map();
   const data = emailSheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     const source = data[i][0];
     const daId = data[i][1];
     const ppTxn = data[i][4];
-    if (source === 'dataannotation' && daId) existing.set(daId + '_da', data[i][7]);
-    if (source === 'paypal' && ppTxn) existing.set(ppTxn + '_pp', data[i][7]);
-    if (source === 'paypal_transfer' && ppTxn) existing.set(ppTxn + '_pptx', data[i][7]);
+    const id = data[i][6];
+    if (source === 'dataannotation' && daId) existing.set(daId + '_da', id);
+    if (source === 'paypal_transfer' && ppTxn) existing.set(ppTxn + '_pptx', id);
   }
   return existing;
-}
-
-function matchAndAdvancePipeline(paymentSheet, emailSheet, daPayouts, ppReceipts, ppTransfers) {
-  let matchCount = 0;
-  const paymentData = paymentSheet.getDataRange().getValues();
-  const headers = TABS.Payments;
-
-  // Track which DA payouts were matched to existing payments
-  const matchedDaPayouts = new Set();
-
-  // For each DA payout, find matching payment by amount and advance to paid_out
-  daPayouts.forEach((dp, dpIndex) => {
-    for (let i = 1; i < paymentData.length; i++) {
-      const status = paymentData[i][headers.indexOf('Status')];
-      const amount = parseFloat(paymentData[i][headers.indexOf('Amount')]);
-
-      if ((status === 'submitted' || status === 'pending_payout') &&
-          Math.abs(amount - dp.amount) < 0.01) {
-        // Advance to paid_out
-        const row = i + 1;
-        paymentSheet.getRange(row, headers.indexOf('Status') + 1).setValue('paid_out');
-        paymentSheet.getRange(row, headers.indexOf('PaidOutAt') + 1).setValue(dp.receivedAt);
-        paymentSheet.getRange(row, headers.indexOf('DAPaymentId') + 1).setValue(dp.daPaymentId);
-
-        // Calculate transfer expected (3 business days)
-        const transferExpected = addBusinessDays(new Date(dp.receivedAt), 3);
-        paymentSheet.getRange(row, headers.indexOf('TransferExpectedAt') + 1).setValue(transferExpected.toISOString());
-
-        paymentData[i][headers.indexOf('Status')] = 'paid_out';
-        matchedDaPayouts.add(dpIndex);
-        matchCount++;
-        break;
-      }
-    }
-  });
-
-  // AUTO-CREATE: For unmatched DA payouts, create new payment records at paid_out stage
-  daPayouts.forEach((dp, dpIndex) => {
-    if (matchedDaPayouts.has(dpIndex)) return;
-
-    // Check if a payment with this DA payment ID already exists (avoid duplicates)
-    let alreadyExists = false;
-    for (let i = 1; i < paymentData.length; i++) {
-      const existingDaId = paymentData[i][headers.indexOf('DAPaymentId')];
-      if (existingDaId === dp.daPaymentId) {
-        alreadyExists = true;
-        break;
-      }
-    }
-    if (alreadyExists) return;
-
-    // Create a new payment record
-    const transferExpected = addBusinessDays(new Date(dp.receivedAt), 3);
-    const taxRate = 0.35;
-    const tax = dp.amount * taxRate;
-    const netAmount = dp.amount - tax;
-    const paymentId = 'pmt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-
-    const newRow = headers.map(h => {
-      switch(h) {
-        case 'Amount': return dp.amount;
-        case 'Tax': return tax;
-        case 'NetAmount': return netAmount;
-        case 'Type': return 'project';
-        case 'Status': return 'paid_out';
-        case 'SubmittedAt': return dp.receivedAt;
-        case 'PayoutExpectedAt': return dp.receivedAt;
-        case 'PaidOutAt': return dp.receivedAt;
-        case 'DAPaymentId': return dp.daPaymentId;
-        case 'TransferExpectedAt': return transferExpected.toISOString();
-        case 'TransferredAt': return '';
-        case 'PaypalTransactionId': return '';
-        case 'InBankAt': return '';
-        case 'Notes': return 'Auto-created from DA payout email';
-        case 'WorkSessionIds': return '';
-        case 'ID': return paymentId;
-        default: return '';
-      }
-    });
-
-    paymentSheet.appendRow(newRow);
-    paymentData.push(newRow); // Add to local cache for subsequent matching
-    matchCount++;
-  });
-
-  // For each PayPal receipt ("You have a new payout!"), only add the transaction ID
-  // This email confirms PayPal received DA funds - does NOT advance to in_bank
-  ppReceipts.forEach(pp => {
-    for (let i = 1; i < paymentData.length; i++) {
-      const status = paymentData[i][headers.indexOf('Status')];
-      const daId = paymentData[i][headers.indexOf('DAPaymentId')];
-      const amount = parseFloat(paymentData[i][headers.indexOf('Amount')]);
-      const existingPpTxn = paymentData[i][headers.indexOf('PaypalTransactionId')];
-
-      // Match paid_out payments by DA ID or by amount (if no existing PayPal txn)
-      if (status === 'paid_out' && !existingPpTxn &&
-          ((pp.daPaymentId && daId === pp.daPaymentId) ||
-           (!pp.daPaymentId && Math.abs(amount - pp.amount) < 0.01))) {
-        const row = i + 1;
-        // Only add PayPal transaction ID - do NOT change status
-        paymentSheet.getRange(row, headers.indexOf('PaypalTransactionId') + 1).setValue(pp.paypalTransactionId);
-        paymentData[i][headers.indexOf('PaypalTransactionId')] = pp.paypalTransactionId;
-        matchCount++;
-        break;
-      }
-    }
-  });
-
-  // For each PayPal transfer email, advance paid_out to transferring
-  (ppTransfers || []).forEach(pt => {
-    for (let i = 1; i < paymentData.length; i++) {
-      const status = paymentData[i][headers.indexOf('Status')];
-      const amount = parseFloat(paymentData[i][headers.indexOf('Amount')]);
-      const existingPpTxn = paymentData[i][headers.indexOf('PaypalTransactionId')];
-
-      // Match paid_out payments by amount or by PayPal transaction ID
-      if (status === 'paid_out' &&
-          (Math.abs(amount - pt.amount) < 0.01 ||
-           (existingPpTxn && existingPpTxn === pt.paypalTransactionId))) {
-        const row = i + 1;
-        paymentSheet.getRange(row, headers.indexOf('Status') + 1).setValue('transferring');
-        paymentSheet.getRange(row, headers.indexOf('TransferredAt') + 1).setValue(pt.receivedAt);
-        if (!existingPpTxn) {
-          paymentSheet.getRange(row, headers.indexOf('PaypalTransactionId') + 1).setValue(pt.paypalTransactionId);
-        }
-
-        paymentData[i][headers.indexOf('Status')] = 'transferring';
-        matchCount++;
-        break;
-      }
-    }
-  });
-
-  return matchCount;
 }
 
 function addBusinessDays(date, days) {

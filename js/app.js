@@ -74,18 +74,11 @@ const App = {
         this.showLoading(true);
         try {
             const sessions = await SheetsAPI.getWorkSessions();
-            const payments = await SheetsAPI.getPayments();
+            const emailPayouts = await SheetsAPI.getEmailPayouts();
 
-            // Auto-advance pipeline
-            if (Pipeline.autoAdvance(payments)) {
-                for (const p of payments) {
-                    await SheetsAPI.updatePayment(p.id, { status: p.status });
-                }
-            }
-
-            this.renderDashboard(sessions, payments);
+            this.renderDashboard(sessions, emailPayouts);
             this.renderSessionsTable(sessions);
-            Pipeline.renderPipeline(payments);
+            Pipeline.renderPipeline(sessions, emailPayouts);
             await Goals.renderGoals();
         } catch (error) {
             console.error('Error loading data:', error);
@@ -233,12 +226,17 @@ const App = {
 
     // ============ Dashboard Rendering ============
 
-    renderDashboard(sessions, payments) {
-        // Total amount to be paid = all earnings - payments that reached "in_bank"
+    renderDashboard(sessions, emailPayouts) {
+        // Total amount to be paid = all earnings - transfers that completed (in bank)
         const totalEarnings = sessions.reduce((sum, s) => sum + (parseFloat(s.earnings) || 0), 0);
-        const inBankTotal = (payments || [])
-            .filter(p => p.status === 'in_bank')
-            .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        const now = new Date();
+        const inBankTotal = (emailPayouts || [])
+            .filter(e => {
+                if (e.source !== 'paypal_transfer') return false;
+                const arrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
+                return arrival && now >= arrival;
+            })
+            .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
         const unpaid = totalEarnings - inBankTotal;
         const totalHours = sessions.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0);
 
@@ -439,8 +437,7 @@ const App = {
         }
 
         const session = {
-            date, startTime: '', endTime: '',
-            duration, type, projectId, notes, hourlyRate, earnings,
+            date, duration, type, projectId, notes, hourlyRate, earnings,
             submittedAt: new Date().toISOString()
         };
 
@@ -918,13 +915,12 @@ const App = {
 
             const results = data.results || {};
             const daCount = results.daPayouts || 0;
-            const ppCount = results.paypalReceipts || 0;
             const ptCount = results.paypalTransfers || 0;
-            const matched = results.matched || 0;
+            const newCount = results.newRecords || 0;
 
-            this.showToast(`Found ${daCount} DA, ${ppCount} PayPal, ${ptCount} transfers, ${matched} matched`, 'success');
+            this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers. ${newCount} new records saved.`, 'success');
 
-            // Reload data to reflect any pipeline changes
+            // Reload data to reflect pipeline changes
             await this.loadData();
         } catch (error) {
             console.error('Email scan error:', error);
