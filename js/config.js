@@ -1,6 +1,6 @@
 // Configuration for Hours Worked Tracker
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 
 // Auth roles
 const AUTH_ROLES = {
@@ -36,7 +36,7 @@ const CONFIG = {
     DEFAULT_TAX_RATE: 0.35,
 
     // Payment pipeline timing (in hours)
-    PROJECT_PAYOUT_HOURS: 187,  // 7 days + 19 hours
+    PROJECT_PAYOUT_HOURS: 168,  // 7 days
     TASK_PAYOUT_HOURS: 72,      // 3 days
     PAYPAL_TRANSFER_BUSINESS_DAYS: 3,
 

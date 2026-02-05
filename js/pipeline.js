@@ -6,8 +6,8 @@ const Pipeline = {
 
     STAGE_LABELS: {
         submitted: 'Submitted',
-        pending_payout: 'Pending Payout',
-        paid_out: 'Paid Out',
+        pending_payout: 'Available for Payout',
+        paid_out: 'In PayPal',
         transferring: 'Transferring',
         in_bank: 'In Bank'
     },
