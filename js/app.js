@@ -246,6 +246,8 @@ const App = {
         document.getElementById('week-hours').textContent = totalHours.toFixed(1) + ' hours worked';
         document.getElementById('week-tax').textContent = '$' + TaxCalc.calcTax(Math.max(0, unpaid)).toFixed(2);
         document.getElementById('week-net').textContent = 'Net: $' + TaxCalc.calcNet(Math.max(0, unpaid)).toFixed(2);
+        const taxLabel = document.getElementById('tax-card-label');
+        if (taxLabel) taxLabel.textContent = `Tax to Set Aside (${Math.round(TaxCalc.getTaxRate() * 100)}%)`;
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
@@ -301,7 +303,7 @@ const App = {
 
     // ============ Work Session Modal ============
 
-    openSessionModal(editId) {
+    async openSessionModal(editId) {
         const modal = document.getElementById('session-modal');
         const title = document.getElementById('session-modal-title');
         const form = document.getElementById('session-form');
@@ -311,13 +313,12 @@ const App = {
 
         if (editId) {
             title.textContent = 'Edit Work Session';
-            this.populateSessionForm(editId);
+            await this.populateSessionForm(editId);
         } else {
             title.textContent = 'Log Work Session';
             document.getElementById('session-date').value = new Date().toISOString().split('T')[0];
+            this.setWorkType('project');
         }
-
-        this.setWorkType('project');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
     },
@@ -447,7 +448,7 @@ const App = {
     },
 
     async editSession(id) {
-        this.openSessionModal(id);
+        await this.openSessionModal(id);
     },
 
     async deleteSession(id) {
