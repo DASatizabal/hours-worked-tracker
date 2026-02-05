@@ -311,16 +311,32 @@ const App = {
         form.reset();
         document.getElementById('session-edit-id').value = '';
 
+        // Show modal immediately (before any async work)
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
         if (editId) {
             title.textContent = 'Edit Work Session';
+            // Show loading state on submit button while data loads
+            const btn = form.querySelector('button[type="submit"]');
+            if (btn) {
+                btn.disabled = true;
+                btn.dataset.originalText = btn.textContent;
+                btn.textContent = 'Loading...';
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
             await this.populateSessionForm(editId);
+            // Restore button after data loads
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.originalText || 'Save Session';
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
         } else {
             title.textContent = 'Log Work Session';
             document.getElementById('session-date').value = new Date().toISOString().split('T')[0];
             this.setWorkType('project');
         }
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
     },
 
     async populateSessionForm(id) {
@@ -453,11 +469,25 @@ const App = {
 
     async deleteSession(id) {
         if (!confirm('Delete this work session?')) return;
+
+        // Immediate visual feedback: fade the row
+        const row = document.querySelector(`button[onclick="App.deleteSession('${id}')"]`)?.closest('tr');
+        if (row) {
+            row.style.opacity = '0.4';
+            row.style.pointerEvents = 'none';
+        }
+        this.showToast('Deleting session...', 'info');
+
         try {
             await SheetsAPI.deleteWorkSession(id);
             this.showToast('Session deleted', 'success');
             await this.loadData();
         } catch (error) {
+            // Restore the row if delete failed
+            if (row) {
+                row.style.opacity = '1';
+                row.style.pointerEvents = '';
+            }
             this.showToast('Error deleting session', 'error');
         }
     },
@@ -889,9 +919,10 @@ const App = {
             const results = data.results || {};
             const daCount = results.daPayouts || 0;
             const ppCount = results.paypalReceipts || 0;
+            const ptCount = results.paypalTransfers || 0;
             const matched = results.matched || 0;
 
-            this.showToast(`Found ${daCount} DA payouts, ${ppCount} PayPal receipts, ${matched} matched`, 'success');
+            this.showToast(`Found ${daCount} DA, ${ppCount} PayPal, ${ptCount} transfers, ${matched} matched`, 'success');
 
             // Reload data to reflect any pipeline changes
             await this.loadData();
