@@ -1,9 +1,7 @@
 # Hours Worked Tracker - TODO
 
 ## Priority: Deploy & Verify (USER ACTION NEEDED)
-- [ ] Deploy updated camelCase function to Apps Script editor & redeploy (New version)
-  - Copy the `camelCase` function from `google-apps-script.js` into your live Apps Script
-  - Deploy > Manage deployments > edit > New version > Deploy
+- [x] Deploy updated camelCase function to Apps Script editor & redeploy — confirmed deployed
 - [ ] Verify Google Sheets sync end-to-end — all fields (ID, ProjectID) write correctly
 - [ ] Clean up old manually-entered data — remove test entries, verify all have IDs
 
