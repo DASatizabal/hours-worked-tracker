@@ -259,51 +259,44 @@
                     <input type="date" id="session-date" required
                         class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
                 </div>
-                <!-- Time entry mode toggle -->
+                <!-- Work Type toggle -->
                 <div>
-                    <label class="block text-sm font-medium text-slate-400 mb-2">Time Entry</label>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Work Type</label>
                     <div class="flex gap-2 mb-3">
-                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors time-mode-btn active" data-mode="duration" id="mode-duration-btn">
-                            Duration
+                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors work-type-btn" data-type="project" id="type-project-btn">
+                            Project
                         </button>
-                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors time-mode-btn" data-mode="range" id="mode-range-btn">
-                            Start/End Time
+                        <button type="button" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors work-type-btn" data-type="task" id="type-task-btn">
+                            Task
                         </button>
                     </div>
                 </div>
-                <!-- Duration input -->
-                <div id="duration-input-group">
-                    <label for="session-duration" class="block text-sm font-medium text-slate-400 mb-2">Duration (hours)</label>
-                    <input type="number" id="session-duration" step="0.25" min="0.25" placeholder="e.g., 2.5"
+                <!-- Amount Paid (always visible) -->
+                <div>
+                    <label for="session-amount" class="block text-sm font-medium text-slate-400 mb-2">Amount Paid ($)</label>
+                    <input type="number" id="session-amount" step="0.01" min="0.01" required placeholder="e.g., 45.00"
                         class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
                 </div>
-                <!-- Start/End time inputs -->
-                <div id="range-input-group" class="hidden space-y-4">
-                    <div>
-                        <label for="session-start" class="block text-sm font-medium text-slate-400 mb-2">Start Time</label>
-                        <input type="time" id="session-start"
-                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
-                    </div>
-                    <div>
-                        <label for="session-end" class="block text-sm font-medium text-slate-400 mb-2">End Time</label>
-                        <input type="time" id="session-end"
-                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
+                <!-- Time Worked (Project only) -->
+                <div id="time-worked-group">
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Time Worked</label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="relative">
+                            <input type="number" id="session-hours" min="0" max="23" step="1" placeholder="0"
+                                class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors pr-16">
+                            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">hours</span>
+                        </div>
+                        <div class="relative">
+                            <input type="number" id="session-minutes" min="0" max="59" step="1" placeholder="0"
+                                class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors pr-14">
+                            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">min</span>
+                        </div>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label for="session-type" class="block text-sm font-medium text-slate-400 mb-2">Type</label>
-                        <select id="session-type" required
-                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
-                            <option value="project">Project</option>
-                            <option value="task">Task</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="session-rate" class="block text-sm font-medium text-slate-400 mb-2">Hourly Rate ($)</label>
-                        <input type="number" id="session-rate" step="0.01" min="0.01"
-                            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
-                    </div>
+                <!-- Hourly Rate (auto-calculated, Project only) -->
+                <div id="hourly-rate-display" class="flex items-center justify-between px-4 py-3 bg-white/5 border border-white/10 rounded-xl">
+                    <span class="text-sm text-slate-400">Hourly Rate</span>
+                    <span class="text-sm font-medium text-white" id="calc-hourly-rate">$0.00/hr</span>
                 </div>
                 <div>
                     <label for="session-project-id" class="block text-sm font-medium text-slate-400 mb-2">Project/Task ID (optional)</label>

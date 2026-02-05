@@ -1,7 +1,7 @@
 // Main Application Logic for Hours Worked Tracker
 
 const App = {
-    _timeMode: 'duration', // 'duration' or 'range'
+    _workType: 'project', // 'project' or 'task'
 
     // ============ Initialization ============
 
@@ -133,9 +133,14 @@ const App = {
         document.getElementById('session-modal-backdrop')?.addEventListener('click', () => this.closeModal('session-modal'));
         document.getElementById('session-form')?.addEventListener('submit', (e) => this.handleSessionSubmit(e));
 
-        // Time mode toggle
-        document.getElementById('mode-duration-btn')?.addEventListener('click', () => this.setTimeMode('duration'));
-        document.getElementById('mode-range-btn')?.addEventListener('click', () => this.setTimeMode('range'));
+        // Work type toggle
+        document.getElementById('type-project-btn')?.addEventListener('click', () => this.setWorkType('project'));
+        document.getElementById('type-task-btn')?.addEventListener('click', () => this.setWorkType('task'));
+
+        // Auto-calculate hourly rate on input change
+        document.getElementById('session-amount')?.addEventListener('input', () => this.updateCalcRate());
+        document.getElementById('session-hours')?.addEventListener('input', () => this.updateCalcRate());
+        document.getElementById('session-minutes')?.addEventListener('input', () => this.updateCalcRate());
 
         // Payment modal
         document.getElementById('close-payment-modal')?.addEventListener('click', () => this.closeModal('payment-modal'));
@@ -247,7 +252,7 @@ const App = {
                 <td class="px-4 py-3 text-sm">
                     <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : 'Task'}</span>
                 </td>
-                <td class="px-4 py-3 text-sm text-right text-white">${parseFloat(s.duration).toFixed(2)}h</td>
+                <td class="px-4 py-3 text-sm text-right text-white">${parseFloat(s.duration) > 0 ? parseFloat(s.duration).toFixed(2) + 'h' : '-'}</td>
                 <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">$${parseFloat(s.earnings).toFixed(2)}</td>
                 <td class="px-4 py-3 text-sm text-slate-400">${s.projectId || '-'}</td>
                 <td class="px-4 py-3 text-sm text-slate-400 max-w-[200px] truncate">${s.notes || '-'}</td>
@@ -283,10 +288,9 @@ const App = {
         } else {
             title.textContent = 'Log Work Session';
             document.getElementById('session-date').value = new Date().toISOString().split('T')[0];
-            document.getElementById('session-rate').value = this.getDefaultRate();
         }
 
-        this.setTimeMode('duration');
+        this.setWorkType('project');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
     },
@@ -298,42 +302,62 @@ const App = {
 
         document.getElementById('session-edit-id').value = id;
         document.getElementById('session-date').value = session.date;
-        document.getElementById('session-type').value = session.type;
-        document.getElementById('session-rate').value = session.hourlyRate;
         document.getElementById('session-project-id').value = session.projectId || '';
         document.getElementById('session-notes').value = session.notes || '';
+        document.getElementById('session-amount').value = session.earnings || '';
 
-        if (session.startTime && session.endTime) {
-            this.setTimeMode('range');
-            document.getElementById('session-start').value = session.startTime;
-            document.getElementById('session-end').value = session.endTime;
-        } else {
-            this.setTimeMode('duration');
-            document.getElementById('session-duration').value = session.duration;
+        const type = session.type || 'project';
+        this.setWorkType(type);
+
+        if (type === 'project' && session.duration) {
+            const totalMinutes = Math.round(parseFloat(session.duration) * 60);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+            document.getElementById('session-hours').value = hours;
+            document.getElementById('session-minutes').value = minutes;
         }
+
+        this.updateCalcRate();
     },
 
-    setTimeMode(mode) {
-        this._timeMode = mode;
-        const durGroup = document.getElementById('duration-input-group');
-        const rangeGroup = document.getElementById('range-input-group');
-        const durBtn = document.getElementById('mode-duration-btn');
-        const rangeBtn = document.getElementById('mode-range-btn');
+    setWorkType(type) {
+        this._workType = type;
+        const timeGroup = document.getElementById('time-worked-group');
+        const rateDisplay = document.getElementById('hourly-rate-display');
+        const projectBtn = document.getElementById('type-project-btn');
+        const taskBtn = document.getElementById('type-task-btn');
 
-        if (mode === 'duration') {
-            durGroup.classList.remove('hidden');
-            rangeGroup.classList.add('hidden');
-            durBtn.classList.add('bg-violet-600', 'text-white');
-            durBtn.classList.remove('bg-white/10', 'text-slate-400');
-            rangeBtn.classList.remove('bg-violet-600', 'text-white');
-            rangeBtn.classList.add('bg-white/10', 'text-slate-400');
+        if (type === 'project') {
+            timeGroup.classList.remove('hidden');
+            rateDisplay.classList.remove('hidden');
+            projectBtn.classList.add('bg-violet-600', 'text-white');
+            projectBtn.classList.remove('bg-white/10', 'text-slate-400');
+            taskBtn.classList.remove('bg-violet-600', 'text-white');
+            taskBtn.classList.add('bg-white/10', 'text-slate-400');
         } else {
-            durGroup.classList.add('hidden');
-            rangeGroup.classList.remove('hidden');
-            rangeBtn.classList.add('bg-violet-600', 'text-white');
-            rangeBtn.classList.remove('bg-white/10', 'text-slate-400');
-            durBtn.classList.remove('bg-violet-600', 'text-white');
-            durBtn.classList.add('bg-white/10', 'text-slate-400');
+            timeGroup.classList.add('hidden');
+            rateDisplay.classList.add('hidden');
+            taskBtn.classList.add('bg-violet-600', 'text-white');
+            taskBtn.classList.remove('bg-white/10', 'text-slate-400');
+            projectBtn.classList.remove('bg-violet-600', 'text-white');
+            projectBtn.classList.add('bg-white/10', 'text-slate-400');
+        }
+        this.updateCalcRate();
+    },
+
+    updateCalcRate() {
+        const rateEl = document.getElementById('calc-hourly-rate');
+        if (!rateEl) return;
+
+        const amount = parseFloat(document.getElementById('session-amount')?.value) || 0;
+        const hours = parseInt(document.getElementById('session-hours')?.value) || 0;
+        const minutes = parseInt(document.getElementById('session-minutes')?.value) || 0;
+        const totalHours = hours + minutes / 60;
+
+        if (totalHours > 0 && amount > 0) {
+            rateEl.textContent = '$' + (amount / totalHours).toFixed(2) + '/hr';
+        } else {
+            rateEl.textContent = '$0.00/hr';
         }
     },
 
@@ -342,40 +366,34 @@ const App = {
 
         const editId = document.getElementById('session-edit-id').value;
         const date = document.getElementById('session-date').value;
-        const type = document.getElementById('session-type').value;
-        const hourlyRate = parseFloat(document.getElementById('session-rate').value);
+        const type = this._workType;
+        const earnings = parseFloat(document.getElementById('session-amount').value);
         const projectId = document.getElementById('session-project-id').value.trim();
         const notes = document.getElementById('session-notes').value.trim();
 
-        let duration, startTime, endTime;
-
-        if (this._timeMode === 'duration') {
-            duration = parseFloat(document.getElementById('session-duration').value);
-            if (!duration || duration <= 0) {
-                this.showToast('Please enter a valid duration', 'error');
-                return;
-            }
-            startTime = '';
-            endTime = '';
-        } else {
-            startTime = document.getElementById('session-start').value;
-            endTime = document.getElementById('session-end').value;
-            if (!startTime || !endTime) {
-                this.showToast('Please enter start and end times', 'error');
-                return;
-            }
-            // Calculate duration from time range
-            const [sh, sm] = startTime.split(':').map(Number);
-            const [eh, em] = endTime.split(':').map(Number);
-            let mins = (eh * 60 + em) - (sh * 60 + sm);
-            if (mins < 0) mins += 24 * 60; // overnight
-            duration = mins / 60;
+        if (!earnings || earnings <= 0) {
+            this.showToast('Please enter the amount paid', 'error');
+            return;
         }
 
-        const earnings = duration * hourlyRate;
+        let duration = 0;
+        let hourlyRate = 0;
+
+        if (type === 'project') {
+            const hours = parseInt(document.getElementById('session-hours').value) || 0;
+            const minutes = parseInt(document.getElementById('session-minutes').value) || 0;
+            duration = hours + minutes / 60;
+
+            if (duration <= 0) {
+                this.showToast('Please enter time worked', 'error');
+                return;
+            }
+
+            hourlyRate = earnings / duration;
+        }
 
         const session = {
-            date, startTime: startTime || '', endTime: endTime || '',
+            date, startTime: '', endTime: '',
             duration, type, projectId, notes, hourlyRate, earnings,
             submittedAt: new Date().toISOString()
         };
