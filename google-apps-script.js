@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.5.1
+ * VERSION: 1.5.2
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -269,21 +269,42 @@ function parsePayPalTransferEmail(msg) {
   const txnMatch = body.match(/Transaction\s*ID[:\s]*([A-Za-z0-9]+)/i);
   const paypalTransactionId = txnMatch ? txnMatch[1] : 'pptx_' + msg.getId();
 
-  // Extract estimated arrival (e.g., "by February 4" or "in 1 business day")
+  // Extract estimated arrival
   let estimatedArrival = '';
-  const arrivalMatch = body.match(/by\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
-  if (arrivalMatch) {
-    const months = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 };
-    const month = months[arrivalMatch[1].toLowerCase()];
-    const day = parseInt(arrivalMatch[2]);
-    const year = new Date().getFullYear();
-    const arrivalDate = new Date(year, month, day);
-    // If the date is in the past, assume next year
-    if (arrivalDate < new Date()) arrivalDate.setFullYear(year + 1);
-    estimatedArrival = arrivalDate.toISOString();
+  const months = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 };
+
+  // Try to find transaction date (e.g., "February 4, 2026")
+  const txnDateMatch = body.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s*(\d{4})/i);
+  let txnDate = null;
+  if (txnDateMatch) {
+    const month = months[txnDateMatch[1].toLowerCase()];
+    const day = parseInt(txnDateMatch[2]);
+    const year = parseInt(txnDateMatch[3]);
+    txnDate = new Date(year, month, day);
+  }
+
+  // Try to find "Estimated arrival: X business day(s)"
+  const businessDaysMatch = body.match(/Estimated\s*arrival[:\s]*(\d+)\s*business\s*day/i);
+  if (businessDaysMatch && txnDate) {
+    const numDays = parseInt(businessDaysMatch[1]);
+    estimatedArrival = addBusinessDays(txnDate, numDays).toISOString();
   } else {
-    // Fallback: estimate 1 business day from email date
-    estimatedArrival = addBusinessDays(new Date(date), 1).toISOString();
+    // Try "by February 4" pattern
+    const byDateMatch = body.match(/by\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+    if (byDateMatch) {
+      const month = months[byDateMatch[1].toLowerCase()];
+      const day = parseInt(byDateMatch[2]);
+      const year = new Date().getFullYear();
+      const arrivalDate = new Date(year, month, day);
+      if (arrivalDate < new Date()) arrivalDate.setFullYear(year + 1);
+      estimatedArrival = arrivalDate.toISOString();
+    } else if (txnDate) {
+      // Fallback: transaction date + 1 business day
+      estimatedArrival = addBusinessDays(txnDate, 1).toISOString();
+    } else {
+      // Last resort: email date + 1 business day
+      estimatedArrival = addBusinessDays(new Date(date), 1).toISOString();
+    }
   }
 
   if (amount <= 0) return null;
