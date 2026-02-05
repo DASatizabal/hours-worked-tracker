@@ -7,7 +7,7 @@
  */
 
 // IMPORTANT: Replace with your actual Sheet ID
-const SHEET_ID = 'YOUR_SHEET_ID_HERE';
+const SHEET_ID = '1y1Jjk056nBMP99c_N1YIeUDG3-kpYqmnctydOnZtcbE';
 
 // Tab configurations: column headers for each tab
 const TABS = {
@@ -377,6 +377,8 @@ function createResponse(data) {
 
 function camelCase(str) {
   // Convert PascalCase header to camelCase key
+  // Handle all-caps like 'ID' → 'id'
+  if (str === str.toUpperCase()) return str.toLowerCase();
   return str.charAt(0).toLowerCase() + str.slice(1);
 }
 
