@@ -377,9 +377,12 @@ function createResponse(data) {
 
 function camelCase(str) {
   // Convert PascalCase header to camelCase key
-  // Handle all-caps like 'ID' → 'id'
-  if (str === str.toUpperCase()) return str.toLowerCase();
-  return str.charAt(0).toLowerCase() + str.slice(1);
+  // Handles: 'ID' → 'id', 'ProjectID' → 'projectId', 'DAPaymentId' → 'daPaymentId'
+  return str
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/_(.)/g, function(_, c) { return c.toUpperCase(); });
 }
 
 function formatDate(value) {
