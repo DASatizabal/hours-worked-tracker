@@ -116,6 +116,7 @@ When user says "I'm done for now":
 1. Commit all changes with descriptive message
 2. Push to GitHub (triggers deployment)
 3. Verify live site updated if needed
+4. Update, commit, and push all relevant docs as needed
 
 ## Quick Reference
 **Add a work session:** Click "Log Work Session" button or call from console

@@ -104,9 +104,9 @@ All settings can be changed in the app's **Settings** modal.
 
 ## Verification Checklist
 
-- [ ] Firebase project created, Google Auth enabled
-- [ ] Google Sheet created with 6 tabs
-- [ ] Apps Script deployed, URL pasted into config/settings
+- [X] Firebase project created, Google Auth enabled
+- [X] Google Sheet created with 6 tabs
+- [X] Apps Script deployed, URL pasted into config/settings
 - [ ] Sign in works (Google popup)
 - [ ] Log a work session -> appears in dashboard and table
 - [ ] Tax calculations: $100 earnings -> $35 tax, $65 net shown

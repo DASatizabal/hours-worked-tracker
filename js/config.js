@@ -16,20 +16,20 @@ const AUTH_ROLES = {
 // 4. Add authorized domain
 // 5. Get config: Project settings > Your apps > Add web app
 const FIREBASE_CONFIG = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.firebasestorage.app",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyC2-gDSzWUnmxHvCgljdyMbpTZXfQfb-iM",
+  authDomain: "hours-worked-tracker-3d83d.firebaseapp.com",
+  projectId: "hours-worked-tracker-3d83d",
+  storageBucket: "hours-worked-tracker-3d83d.firebasestorage.app",
+  messagingSenderId: "83325546236",
+  appId: "1:83325546236:web:ae6ba4a4fb167e4284f179"
 };
 
 const CONFIG = {
     // Google Apps Script URL
-    APPS_SCRIPT_URL: 'YOUR_APPS_SCRIPT_URL_HERE',
+    APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwFi9cuw95DbW6sb2_z8FJe2zcSiXPlIOD_i1VZPDh7P5LhYpUNddIG25VAeYX82aR3yQ/exec',
 
     // Set to true to use localStorage only (offline mode)
-    USE_LOCAL_STORAGE: true,
+    USE_LOCAL_STORAGE: false,
 
     // Default settings
     DEFAULT_HOURLY_RATE: 20,
