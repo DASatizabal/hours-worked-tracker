@@ -76,16 +76,37 @@ const App = {
             const sessions = await SheetsAPI.getWorkSessions();
             const emailPayouts = await SheetsAPI.getEmailPayouts();
 
+            // Store for timer updates
+            this._cachedSessions = sessions;
+            this._cachedEmailPayouts = emailPayouts;
+
             this.renderDashboard(sessions, emailPayouts);
             this.renderSessionsTable(sessions);
             Pipeline.renderPipeline(sessions, emailPayouts);
             await Goals.renderGoals();
+
+            // Start pipeline refresh timer (updates every minute)
+            this.startPipelineTimer();
         } catch (error) {
             console.error('Error loading data:', error);
             this.showToast('Error loading data', 'error');
         }
         this.showLoading(false);
         if (typeof lucide !== 'undefined') lucide.createIcons();
+    },
+
+    // Refresh pipeline display every minute for countdown timer
+    startPipelineTimer() {
+        // Clear any existing timer
+        if (this._pipelineTimer) {
+            clearInterval(this._pipelineTimer);
+        }
+        // Update every 60 seconds
+        this._pipelineTimer = setInterval(() => {
+            if (this._cachedSessions && this._cachedEmailPayouts) {
+                Pipeline.renderPipeline(this._cachedSessions, this._cachedEmailPayouts);
+            }
+        }, 60000);
     },
 
     // ============ Theme ============
