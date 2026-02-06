@@ -149,7 +149,7 @@ const Goals = {
                             <span class="text-2xl">${goal.icon || '🎯'}</span>
                             <div>
                                 <h3 class="font-semibold text-white">${goal.name}</h3>
-                                <div class="text-sm text-slate-400">$${progress.targetAmount.toFixed(2)} goal</div>
+                                <div class="text-sm text-slate-400">${formatCurrency(progress.targetAmount)} goal</div>
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
@@ -165,14 +165,14 @@ const Goals = {
 
                     <div class="mt-4">
                         <div class="flex justify-between text-sm text-slate-400 mb-2">
-                            <span>$${progress.savedAmount.toFixed(2)} of $${progress.targetAmount.toFixed(2)} saved</span>
+                            <span>${formatCurrency(progress.savedAmount)} of ${formatCurrency(progress.targetAmount)} saved</span>
                             <span>${progress.percentage}%</span>
                         </div>
                         <div class="h-2 bg-white/10 rounded-full overflow-hidden progress-bar-bg">
                             <div class="h-full progress-gradient rounded-full transition-all duration-500" style="width: ${progress.percentage}%"></div>
                         </div>
                         ${!progress.isComplete ? `
-                            <div class="text-sm font-medium text-cyan-400 mt-2">$${progress.remaining.toFixed(2)} remaining</div>
+                            <div class="text-sm font-medium text-cyan-400 mt-2">${formatCurrency(progress.remaining)} remaining</div>
                         ` : ''}
                         ${hoursHTML}
                     </div>

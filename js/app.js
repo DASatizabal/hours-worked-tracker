@@ -1,5 +1,20 @@
 // Main Application Logic for Hours Worked Tracker
 
+// Global currency/number formatting utilities
+function formatCurrency(amount, decimals = 2) {
+    return '$' + parseFloat(amount).toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatNumber(num, decimals = 2) {
+    return parseFloat(num).toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
 const App = {
     _workType: 'project', // 'project' or 'task'
     _submitting: false, // Prevent double-clicks
@@ -261,19 +276,19 @@ const App = {
         const unpaid = totalEarnings - inBankTotal;
         const totalHours = sessions.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0);
 
-        document.getElementById('week-earnings').textContent = '$' + Math.max(0, unpaid).toFixed(2);
+        document.getElementById('week-earnings').textContent = formatCurrency(Math.max(0, unpaid));
         document.getElementById('week-hours').textContent = totalHours.toFixed(1) + ' hours worked';
-        document.getElementById('week-tax').textContent = '$' + TaxCalc.calcTax(Math.max(0, unpaid)).toFixed(2);
-        document.getElementById('week-net').textContent = 'Net: $' + TaxCalc.calcNet(Math.max(0, unpaid)).toFixed(2);
+        document.getElementById('week-tax').textContent = formatCurrency(TaxCalc.calcTax(Math.max(0, unpaid)));
+        document.getElementById('week-net').textContent = 'Net: ' + formatCurrency(TaxCalc.calcNet(Math.max(0, unpaid)));
         const taxLabel = document.getElementById('tax-card-label');
         if (taxLabel) taxLabel.textContent = `Tax to Set Aside (${Math.round(TaxCalc.getTaxRate() * 100)}%)`;
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
-        document.getElementById('stat-gross').textContent = '$' + allTime.gross.toFixed(2);
-        document.getElementById('stat-tax').textContent = '$' + allTime.tax.toFixed(2);
-        document.getElementById('stat-net').textContent = '$' + allTime.net.toFixed(2);
-        document.getElementById('stat-avg-week').textContent = '$' + TaxCalc.avgPerWeek(sessions).toFixed(2);
+        document.getElementById('stat-gross').textContent = formatCurrency(allTime.gross);
+        document.getElementById('stat-tax').textContent = formatCurrency(allTime.tax);
+        document.getElementById('stat-net').textContent = formatCurrency(allTime.net);
+        document.getElementById('stat-avg-week').textContent = formatCurrency(TaxCalc.avgPerWeek(sessions));
     },
 
     // ============ Sessions Table ============
@@ -301,7 +316,7 @@ const App = {
                     <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : 'Task'}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-right text-white">${parseFloat(s.duration) > 0 ? parseFloat(s.duration).toFixed(2) + 'h' : '-'}</td>
-                <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">$${parseFloat(s.earnings).toFixed(2)}</td>
+                <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">${formatCurrency(s.earnings)}</td>
                 <td class="px-4 py-3 text-sm text-slate-400">${s.projectId || '-'}</td>
                 <td class="px-4 py-3 text-sm text-slate-400 max-w-[200px] truncate">${s.notes || '-'}</td>
                 <td class="px-4 py-3 text-center">
@@ -418,7 +433,7 @@ const App = {
         const totalHours = hours + minutes / 60;
 
         if (totalHours > 0 && amount > 0) {
-            rateEl.textContent = '$' + (amount / totalHours).toFixed(2) + '/hr';
+            rateEl.textContent = formatCurrency(amount / totalHours) + '/hr';
         } else {
             rateEl.textContent = '$0.00/hr';
         }
@@ -471,7 +486,7 @@ const App = {
                 this.showToast('Session updated', 'success');
             } else {
                 await SheetsAPI.saveWorkSession(session);
-                this.showToast('Session logged! $' + earnings.toFixed(2) + ' earned', 'success');
+                this.showToast('Session logged! ' + formatCurrency(earnings) + ' earned', 'success');
             }
             await this.loadData();
         } catch (error) {
@@ -538,7 +553,7 @@ const App = {
             sessionList.innerHTML = unassigned.map(s => `
                 <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-white/5 cursor-pointer">
                     <input type="checkbox" class="payment-session-cb rounded" value="${s.id}" data-amount="${s.earnings}" data-type="${s.type}">
-                    <span class="text-sm text-white">${this.formatDate(s.date)} - ${s.duration}h - $${parseFloat(s.earnings).toFixed(2)} (${s.type})</span>
+                    <span class="text-sm text-white">${this.formatDate(s.date)} - ${s.duration}h - ${formatCurrency(s.earnings)} (${s.type})</span>
                 </label>
             `).join('');
 
@@ -806,7 +821,7 @@ const App = {
         const paymentSelect = document.getElementById('allocate-payment');
         paymentSelect.innerHTML = '<option value="">-- No specific payment --</option>';
         payments.filter(p => p.status === 'in_bank' || p.status === 'paid_out').forEach(p => {
-            paymentSelect.innerHTML += `<option value="${p.id}">$${parseFloat(p.amount).toFixed(2)} (${p.type}) - ${Pipeline.STAGE_LABELS[p.status]}</option>`;
+            paymentSelect.innerHTML += `<option value="${p.id}">${formatCurrency(p.amount)} (${p.type}) - ${Pipeline.STAGE_LABELS[p.status]}</option>`;
         });
 
         modal.classList.remove('hidden');
@@ -851,7 +866,7 @@ const App = {
                 }
             }
 
-            this.showToast('$' + amount.toFixed(2) + ' allocated!', 'success');
+            this.showToast(formatCurrency(amount) + ' allocated!', 'success');
             await Goals.renderGoals();
         } catch (error) {
             this.showToast('Error allocating funds', 'error');

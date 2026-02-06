@@ -183,7 +183,7 @@ const Pipeline = {
                 <div class="flex flex-col items-center min-w-[80px]">
                     <div class="pipeline-dot ${isActive ? 'active' : ''}" style="background-color: ${isActive ? colors.dot : 'rgba(255,255,255,0.1)'}; color: ${colors.dot};"></div>
                     <div class="text-xs ${isActive ? colors.text : 'text-slate-600'} mt-2 font-medium text-center">${this.STAGE_LABELS[stage]}</div>
-                    <div class="text-sm font-bold ${isActive ? 'text-white' : 'text-slate-700'} mt-1">$${total.toFixed(2)}</div>
+                    <div class="text-sm font-bold ${isActive ? 'text-white' : 'text-slate-700'} mt-1">${formatCurrency(total)}</div>
                     ${extraInfo}
                 </div>
             `;
@@ -238,7 +238,7 @@ const Pipeline = {
                         <div class="flex items-center gap-3">
                             <i data-lucide="${this.STAGE_ICONS[stage]}" class="w-4 h-4 ${colors.text}"></i>
                             <div>
-                                <span class="text-sm font-medium text-white">$${amount.toFixed(2)}</span>
+                                <span class="text-sm font-medium text-white">${formatCurrency(amount)}</span>
                                 <span class="text-xs text-slate-400 ml-2">${label}</span>
                             </div>
                         </div>
