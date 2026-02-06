@@ -16,6 +16,7 @@ const TABS = {
   Goals: ['Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
   GoalAllocations: ['GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
   EmailPayouts: ['Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
+  CruisePayments: ['Person', 'Amount', 'Date', 'Note', 'Source', 'ID'],
   Settings: ['Key', 'Value']
 };
 

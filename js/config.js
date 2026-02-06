@@ -47,6 +47,7 @@ const CONFIG = {
         GOALS: 'Goals',
         GOAL_ALLOCATIONS: 'GoalAllocations',
         EMAIL_PAYOUTS: 'EmailPayouts',
+        CRUISE_PAYMENTS: 'CruisePayments',
         SETTINGS: 'Settings'
     }
 };

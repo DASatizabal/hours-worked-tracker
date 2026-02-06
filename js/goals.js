@@ -11,27 +11,51 @@ const Goals = {
         return saved ? parseFloat(saved) : CONFIG.DEFAULT_HOURLY_RATE;
     },
 
-    // Get David's total paid from cruise-payment-tracker localStorage
-    getCruisePaymentTotal() {
+    // Cache for cruise payments (fetched async)
+    _cruisePaymentsCache: null,
+    _cruisePaymentsFetching: false,
+
+    // Get David's total paid from Google Sheets (async)
+    async fetchCruisePayments() {
+        if (this._cruisePaymentsFetching) return;
+        this._cruisePaymentsFetching = true;
+
         try {
-            const data = localStorage.getItem('cruise-payments');
-            console.log('Cruise payments localStorage:', data);
-            if (!data) {
-                console.log('No cruise-payments found in localStorage');
-                return 0;
-            }
-            const payments = JSON.parse(data);
-            console.log('Parsed cruise payments:', payments);
-            // Sum all payments where person === 'david'
-            const davidTotal = payments
-                .filter(p => p.person === 'david')
-                .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-            console.log('David cruise total:', davidTotal);
-            return davidTotal;
+            const payments = await SheetsAPI.getCruisePayments();
+            console.log('Fetched cruise payments from Sheets:', payments);
+            this._cruisePaymentsCache = payments;
         } catch (e) {
-            console.error('Error reading cruise payments:', e);
-            return 0;
+            console.error('Error fetching cruise payments from Sheets:', e);
+            // Fallback to localStorage
+            this._cruisePaymentsCache = this._getCruisePaymentsFromLocalStorage();
+        } finally {
+            this._cruisePaymentsFetching = false;
         }
+    },
+
+    // Fallback: Get from localStorage if Sheets fails
+    _getCruisePaymentsFromLocalStorage() {
+        try {
+            let data = localStorage.getItem('cruise-payments-david');
+            if (!data) data = localStorage.getItem('cruise-payments');
+            if (!data) return [];
+            return JSON.parse(data);
+        } catch (e) {
+            return [];
+        }
+    },
+
+    // Get David's total (sync, uses cache)
+    getCruisePaymentTotal() {
+        const payments = this._cruisePaymentsCache || this._getCruisePaymentsFromLocalStorage();
+        console.log('Cruise payments for total calc:', payments);
+
+        // Sum all payments where person === 'david'
+        const davidTotal = payments
+            .filter(p => p.person === 'david')
+            .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        console.log('David cruise total:', davidTotal);
+        return davidTotal;
     },
 
     // Calculate goal progress
@@ -69,6 +93,9 @@ const Goals = {
     async renderGoals() {
         const container = document.getElementById('goals-container');
         if (!container) return;
+
+        // Fetch cruise payments from Sheets (for cruise goal progress)
+        await this.fetchCruisePayments();
 
         const goals = await SheetsAPI.getGoals();
         const allocations = await SheetsAPI.getGoalAllocations();

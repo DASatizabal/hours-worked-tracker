@@ -137,6 +137,10 @@ const SheetsAPI = {
     async getSettings() { return this.getAll(CONFIG.SHEETS.SETTINGS); },
     async saveSetting(setting) { return this.save(CONFIG.SHEETS.SETTINGS, setting); },
 
+    async getCruisePayments() { return this.getAll(CONFIG.SHEETS.CRUISE_PAYMENTS); },
+    async saveCruisePayment(payment) { return this.save(CONFIG.SHEETS.CRUISE_PAYMENTS, payment); },
+    async deleteCruisePayment(id) { return this.remove(CONFIG.SHEETS.CRUISE_PAYMENTS, id); },
+
     // ============ Google Apps Script Methods ============
 
     async _getFromSheets(tab) {
