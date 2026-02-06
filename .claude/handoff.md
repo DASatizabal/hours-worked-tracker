@@ -13,7 +13,7 @@
 Hours Worked Tracker - a PWA for tracking DataAnnotation work hours, earnings, taxes (35%), payment pipeline, and savings goals. Features a dark glassmorphism UI and syncs with Google Sheets via Apps Script. Single-user personal tool.
 
 ## Current State
-**Version 1.5.7** - Added CruisePayments sync + comma thousands separator formatting.
+**Version 1.5.8** - Added payout countdown timer to work sessions table.
 
 Working features:
 - **Work session logging** - Duration or start/end time entry, project/task type, configurable hourly rate

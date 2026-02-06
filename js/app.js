@@ -15,6 +15,66 @@ function formatNumber(num, decimals = 2) {
     });
 }
 
+// Calculate payout countdown for a work session
+function getPayoutCountdown(session) {
+    if (!session.submittedAt) {
+        return { html: '-', expired: true };
+    }
+
+    const now = new Date();
+    const submittedAt = new Date(session.submittedAt);
+    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+    const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+    const remainingMs = payoutExpected - now;
+
+    // Already available for payout
+    if (remainingMs <= 0) {
+        return {
+            html: '<span class="text-emerald-400">✓</span>',
+            expired: true
+        };
+    }
+
+    // Calculate hours and minutes remaining
+    const totalMinutes = Math.floor(remainingMs / (1000 * 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const timeStr = `${hours}h ${minutes}m`;
+
+    // Determine color based on type and remaining hours
+    let colorClass = '';
+    let extraClass = '';
+
+    if (session.type === 'project') {
+        // Projects: 168 hours total
+        if (hours > 96) {
+            colorClass = 'text-red-400';
+        } else if (hours > 72) {
+            colorClass = 'text-orange-400';
+        } else if (hours > 24) {
+            colorClass = 'text-yellow-400';
+        } else {
+            colorClass = 'text-yellow-400';
+            extraClass = 'font-bold underline';
+        }
+    } else {
+        // Tasks: 72 hours total
+        if (hours > 48) {
+            colorClass = 'text-red-400';
+        } else if (hours > 24) {
+            colorClass = 'text-orange-400';
+        } else {
+            colorClass = 'text-yellow-400';
+            extraClass = 'font-bold underline';
+        }
+    }
+
+    return {
+        html: `<span class="${colorClass} ${extraClass}">${timeStr}</span>`,
+        expired: false
+    };
+}
+
 const App = {
     _workType: 'project', // 'project' or 'task'
     _submitting: false, // Prevent double-clicks
@@ -309,7 +369,9 @@ const App = {
 
         if (empty) empty.classList.add('hidden');
 
-        tbody.innerHTML = sorted.map(s => `
+        tbody.innerHTML = sorted.map(s => {
+            const countdown = getPayoutCountdown(s);
+            return `
             <tr class="hover:bg-white/5 transition-colors">
                 <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}</td>
                 <td class="px-4 py-3 text-sm">
@@ -319,6 +381,7 @@ const App = {
                 <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">${formatCurrency(s.earnings)}</td>
                 <td class="px-4 py-3 text-sm text-slate-400">${s.projectId || '-'}</td>
                 <td class="px-4 py-3 text-sm text-slate-400 max-w-[200px] truncate">${s.notes || '-'}</td>
+                <td class="px-4 py-3 text-sm text-center">${countdown.html}</td>
                 <td class="px-4 py-3 text-center">
                     <div class="flex items-center justify-center gap-1">
                         <button class="p-1 hover:bg-white/10 rounded transition-colors" onclick="App.editSession('${s.id}')" title="Edit">
@@ -330,7 +393,7 @@ const App = {
                     </div>
                 </td>
             </tr>
-        `).join('');
+        `}).join('');
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
     },
