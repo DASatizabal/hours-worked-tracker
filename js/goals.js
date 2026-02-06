@@ -15,12 +15,19 @@ const Goals = {
     getCruisePaymentTotal() {
         try {
             const data = localStorage.getItem('cruise-payments');
-            if (!data) return 0;
+            console.log('Cruise payments localStorage:', data);
+            if (!data) {
+                console.log('No cruise-payments found in localStorage');
+                return 0;
+            }
             const payments = JSON.parse(data);
+            console.log('Parsed cruise payments:', payments);
             // Sum all payments where person === 'david'
-            return payments
+            const davidTotal = payments
                 .filter(p => p.person === 'david')
                 .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+            console.log('David cruise total:', davidTotal);
+            return davidTotal;
         } catch (e) {
             console.error('Error reading cruise payments:', e);
             return 0;
