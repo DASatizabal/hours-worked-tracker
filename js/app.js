@@ -473,15 +473,19 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Sort by remaining time (expired first when asc)
-                    const cdA = getPayoutCountdown(a);
-                    const cdB = getPayoutCountdown(b);
-                    if (cdA.expired && !cdB.expired) return mult * -1;
-                    if (!cdA.expired && cdB.expired) return mult * 1;
-                    // Both pending: sort by submittedAt
-                    valA = a.submittedAt || '';
-                    valB = b.submittedAt || '';
-                    return mult * valA.localeCompare(valB);
+                    // Calculate remaining milliseconds for each
+                    const now = new Date();
+                    const getRemaining = (s) => {
+                        if (!s.submittedAt) return -Infinity; // No submittedAt goes to end
+                        const submittedAt = new Date(s.submittedAt);
+                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+                        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+                        return payoutExpected - now; // Negative means expired
+                    };
+                    const remA = getRemaining(a);
+                    const remB = getRemaining(b);
+                    // Sort by remaining time (lower/negative = closer to or past payout)
+                    return mult * (remA - remB);
                 default:
                     return 0;
             }
