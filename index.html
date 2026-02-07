@@ -105,7 +105,7 @@
         </header>
 
         <!-- Summary Cards -->
-        <section class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <!-- This Week's Earnings -->
             <div class="group relative bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 hover:border-violet-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-violet-500/10 card">
                 <div class="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
@@ -129,6 +129,19 @@
                     </div>
                     <div class="text-3xl font-bold text-red-400" id="week-tax">$0.00</div>
                     <div class="text-sm text-emerald-400 mt-1" id="week-net">Net: $0.00</div>
+                </div>
+            </div>
+
+            <!-- Est. Next Paycheck Card -->
+            <div class="group relative bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 hover:border-emerald-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/10 card">
+                <div class="absolute inset-0 bg-gradient-to-br from-emerald-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div class="relative">
+                    <div class="flex items-center gap-2 text-slate-400 text-sm mb-2">
+                        <i data-lucide="calendar-check" class="w-4 h-4"></i>
+                        <span id="paycheck-card-label">Est. Next Paycheck</span>
+                    </div>
+                    <div class="text-3xl font-bold text-emerald-400" id="next-paycheck-amount">$0.00</div>
+                    <div class="text-sm text-slate-500 mt-1" id="next-paycheck-date">By Tue noon</div>
                 </div>
             </div>
 
@@ -548,6 +561,20 @@
                         <input type="number" id="settings-task-hours" step="1" min="1"
                             class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors">
                     </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Payout Day</label>
+                    <select id="settings-payout-weekday"
+                        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-violet-500 cursor-pointer transition-colors">
+                        <option value="0">Sunday</option>
+                        <option value="1">Monday</option>
+                        <option value="2">Tuesday</option>
+                        <option value="3">Wednesday</option>
+                        <option value="4">Thursday</option>
+                        <option value="5">Friday</option>
+                        <option value="6">Saturday</option>
+                    </select>
+                    <p class="text-xs text-slate-500 mt-1">Day you typically submit payouts (by noon)</p>
                 </div>
                 <div>
                     <button type="button" id="settings-save-btn"

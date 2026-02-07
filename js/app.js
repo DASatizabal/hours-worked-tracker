@@ -75,6 +75,53 @@ function getPayoutCountdown(session) {
     };
 }
 
+// Calculate the next occurrence of a weekday at noon
+function getNextPayoutDeadline(weekday) {
+    const now = new Date();
+    const currentDay = now.getDay();
+    const currentHour = now.getHours();
+
+    // Calculate days until target weekday
+    let daysUntil = weekday - currentDay;
+
+    // If target day is today but it's past noon, or target day has passed this week
+    if (daysUntil < 0 || (daysUntil === 0 && currentHour >= 12)) {
+        daysUntil += 7;
+    }
+
+    const deadline = new Date(now);
+    deadline.setDate(deadline.getDate() + daysUntil);
+    deadline.setHours(12, 0, 0, 0); // Set to noon
+
+    return deadline;
+}
+
+// Calculate estimated paycheck amount (sessions that will be available for payout by deadline)
+function calculateNextPaycheck(sessions, deadline) {
+    let total = 0;
+
+    for (const session of sessions) {
+        if (!session.submittedAt) continue;
+
+        const submittedAt = new Date(session.submittedAt);
+        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+
+        // If payout will be available by the deadline, include it
+        if (payoutExpected <= deadline) {
+            total += parseFloat(session.earnings) || 0;
+        }
+    }
+
+    return total;
+}
+
+// Get short weekday name
+function getWeekdayShort(weekday) {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return days[weekday];
+}
+
 const App = {
     _workType: 'project', // 'project' or 'task'
     _submitting: false, // Prevent double-clicks
@@ -388,6 +435,15 @@ const App = {
         document.getElementById('week-net').textContent = 'Net: ' + formatCurrency(TaxCalc.calcNet(Math.max(0, unpaid)));
         const taxLabel = document.getElementById('tax-card-label');
         if (taxLabel) taxLabel.textContent = `Tax to Set Aside (${Math.round(TaxCalc.getTaxRate() * 100)}%)`;
+
+        // Est. Next Paycheck calculation
+        const payoutWeekday = this.getPayoutWeekday();
+        const deadline = getNextPayoutDeadline(payoutWeekday);
+        const nextPaycheckGross = calculateNextPaycheck(sessions, deadline);
+        const nextPaycheckNet = TaxCalc.calcNet(nextPaycheckGross);
+
+        document.getElementById('next-paycheck-amount').textContent = formatCurrency(nextPaycheckNet);
+        document.getElementById('next-paycheck-date').textContent = `By ${getWeekdayShort(payoutWeekday)} noon`;
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
@@ -1138,6 +1194,7 @@ const App = {
         document.getElementById('settings-tax-rate').value = Math.round(TaxCalc.getTaxRate() * 100);
         document.getElementById('settings-project-hours').value = CONFIG.PROJECT_PAYOUT_HOURS;
         document.getElementById('settings-task-hours').value = CONFIG.TASK_PAYOUT_HOURS;
+        document.getElementById('settings-payout-weekday').value = this.getPayoutWeekday();
 
         modal.classList.remove('hidden');
         modal.classList.add('flex');
@@ -1149,12 +1206,16 @@ const App = {
         const taxRate = parseFloat(document.getElementById('settings-tax-rate').value) / 100;
         const projectHours = parseInt(document.getElementById('settings-project-hours').value);
         const taskHours = parseInt(document.getElementById('settings-task-hours').value);
+        const payoutWeekday = parseInt(document.getElementById('settings-payout-weekday').value);
 
         if (sheetsUrl) SheetsAPI.setUserAppsScriptUrl(sheetsUrl);
         if (hourlyRate > 0) localStorage.setItem('hwt_hourly_rate', hourlyRate.toString());
         if (taxRate >= 0 && taxRate <= 1) TaxCalc.setTaxRate(taxRate);
         if (projectHours > 0) CONFIG.PROJECT_PAYOUT_HOURS = projectHours;
         if (taskHours > 0) CONFIG.TASK_PAYOUT_HOURS = taskHours;
+        if (payoutWeekday >= 0 && payoutWeekday <= 6) {
+            localStorage.setItem('hwt_payout_weekday', payoutWeekday.toString());
+        }
 
         this.showToast('Settings saved', 'success');
         this.closeModal('settings-modal');
@@ -1169,6 +1230,11 @@ const App = {
     getDefaultRate() {
         const saved = localStorage.getItem('hwt_hourly_rate');
         return saved ? parseFloat(saved) : CONFIG.DEFAULT_HOURLY_RATE;
+    },
+
+    getPayoutWeekday() {
+        const saved = localStorage.getItem('hwt_payout_weekday');
+        return saved !== null ? parseInt(saved) : CONFIG.DEFAULT_PAYOUT_WEEKDAY;
     },
 
     // ============ Pipeline Details Toggle ============
