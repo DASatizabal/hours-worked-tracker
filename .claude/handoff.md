@@ -13,7 +13,7 @@
 Hours Worked Tracker - a PWA for tracking DataAnnotation work hours, earnings, taxes (35%), payment pipeline, and savings goals. Features a dark glassmorphism UI and syncs with Google Sheets via Apps Script. Single-user personal tool.
 
 ## Current State
-**Version 1.6.0** - Added "Est. Next Paycheck" card showing earnings available by configurable payout day (default Tuesday).
+**Version 1.6.1** - Est. Next Paycheck card now shows gross amount with net below (matching Tax card style).
 
 Working features:
 - **Work session logging** - Duration or start/end time entry, project/task type, configurable hourly rate

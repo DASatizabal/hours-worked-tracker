@@ -442,8 +442,10 @@ const App = {
         const nextPaycheckGross = calculateNextPaycheck(sessions, deadline);
         const nextPaycheckNet = TaxCalc.calcNet(nextPaycheckGross);
 
-        document.getElementById('next-paycheck-amount').textContent = formatCurrency(nextPaycheckNet);
-        document.getElementById('next-paycheck-date').textContent = `By ${getWeekdayShort(payoutWeekday)} noon`;
+        document.getElementById('next-paycheck-gross').textContent = formatCurrency(nextPaycheckGross);
+        document.getElementById('next-paycheck-net').textContent = 'Net: ' + formatCurrency(nextPaycheckNet);
+        const paycheckLabel = document.getElementById('paycheck-card-label');
+        if (paycheckLabel) paycheckLabel.textContent = `Est. Next Paycheck (${getWeekdayShort(payoutWeekday)} noon)`;
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
