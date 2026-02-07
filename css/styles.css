@@ -260,3 +260,15 @@ body.light-mode .session-table th {
 body.light-mode .session-table tr:hover td {
     background-color: #f8fafc !important;
 }
+
+/* ============ SELECT DROPDOWN OPTIONS ============ */
+
+select option {
+    background-color: #1e293b;
+    color: #f8fafc;
+}
+
+body.light-mode select option {
+    background-color: #f8fafc;
+    color: #1e293b;
+}
