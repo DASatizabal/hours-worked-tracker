@@ -212,6 +212,44 @@
                     <h2 class="text-lg font-semibold text-white">Recent Work Sessions</h2>
                 </div>
                 <div class="flex items-center gap-2">
+                    <!-- Filter dropdown -->
+                    <div class="relative">
+                        <button id="sessions-filter-btn" class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-violet-400 hover:bg-white/5 rounded-lg transition-colors" title="Filter sessions">
+                            <i data-lucide="filter" class="w-4 h-4"></i>
+                            <span>Filter</span>
+                            <span id="sessions-filter-badge" class="hidden px-1.5 py-0.5 text-[10px] bg-violet-500 text-white rounded-full">0</span>
+                        </button>
+                        <div id="sessions-filter-dropdown" class="hidden absolute right-0 top-full mt-1 w-48 bg-slate-800/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-20 overflow-hidden">
+                            <div class="p-3 border-b border-white/10">
+                                <label class="text-xs text-slate-400 block mb-1.5">Type</label>
+                                <select id="filter-type" class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-violet-500">
+                                    <option value="all">All Types</option>
+                                    <option value="project">Projects Only</option>
+                                    <option value="task">Tasks Only</option>
+                                </select>
+                            </div>
+                            <div class="p-3 border-b border-white/10">
+                                <label class="text-xs text-slate-400 block mb-1.5">Payout Status</label>
+                                <select id="filter-payout" class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-violet-500">
+                                    <option value="all">All Status</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="available">Available</option>
+                                </select>
+                            </div>
+                            <div class="p-3 border-b border-white/10">
+                                <label class="text-xs text-slate-400 block mb-1.5">Date Range</label>
+                                <select id="filter-date" class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-violet-500">
+                                    <option value="all">All Time</option>
+                                    <option value="7">Last 7 Days</option>
+                                    <option value="30">Last 30 Days</option>
+                                    <option value="90">Last 90 Days</option>
+                                </select>
+                            </div>
+                            <div class="p-2 flex justify-end">
+                                <button id="filter-clear-btn" class="px-3 py-1 text-xs text-slate-400 hover:text-white transition-colors">Clear All</button>
+                            </div>
+                        </div>
+                    </div>
                     <button id="export-sessions-btn" class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-violet-400 hover:bg-white/5 rounded-lg transition-colors" title="Export to CSV">
                         <i data-lucide="download" class="w-4 h-4"></i>
                         <span>Export</span>
@@ -222,13 +260,25 @@
                 <table class="w-full session-table">
                     <thead>
                         <tr class="text-xs text-slate-500 bg-white/5">
-                            <th class="px-4 py-3 text-left font-medium">Date</th>
-                            <th class="px-4 py-3 text-left font-medium">Type</th>
-                            <th class="px-4 py-3 text-right font-medium">Duration</th>
-                            <th class="px-4 py-3 text-right font-medium">Earnings</th>
-                            <th class="px-4 py-3 text-left font-medium">Project ID</th>
+                            <th class="px-4 py-3 text-left font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="date">
+                                <span class="inline-flex items-center gap-1">Date <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
+                            <th class="px-4 py-3 text-left font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="type">
+                                <span class="inline-flex items-center gap-1">Type <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
+                            <th class="px-4 py-3 text-right font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="duration">
+                                <span class="inline-flex items-center gap-1 justify-end">Duration <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
+                            <th class="px-4 py-3 text-right font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="earnings">
+                                <span class="inline-flex items-center gap-1 justify-end">Earnings <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
+                            <th class="px-4 py-3 text-left font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="projectId">
+                                <span class="inline-flex items-center gap-1">Project ID <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
                             <th class="px-4 py-3 text-left font-medium">Notes</th>
-                            <th class="px-4 py-3 text-center font-medium">Payout</th>
+                            <th class="px-4 py-3 text-center font-medium sortable-header cursor-pointer hover:text-violet-400 transition-colors" data-sort="payout">
+                                <span class="inline-flex items-center gap-1">Payout <i data-lucide="chevrons-up-down" class="w-3 h-3 sort-icon"></i></span>
+                            </th>
                             <th class="px-4 py-3 text-center font-medium">Actions</th>
                         </tr>
                     </thead>

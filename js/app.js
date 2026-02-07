@@ -79,6 +79,15 @@ const App = {
     _workType: 'project', // 'project' or 'task'
     _submitting: false, // Prevent double-clicks
 
+    // Sessions table sorting state
+    _sessionsSort: { column: 'date', direction: 'desc' },
+
+    // Sessions table filter state
+    _sessionsFilter: { type: 'all', payout: 'all', date: 'all' },
+
+    // Cached sessions for re-rendering
+    _cachedSessions: [],
+
     // Lock/unlock submit buttons during async operations
     setSubmitting(form, busy) {
         this._submitting = busy;
@@ -285,6 +294,43 @@ const App = {
 
         // Scan emails
         document.getElementById('scan-emails-btn')?.addEventListener('click', () => this.scanEmails());
+
+        // Sessions table sorting
+        document.querySelectorAll('.sortable-header').forEach(th => {
+            th.addEventListener('click', () => this.handleSessionSort(th.dataset.sort));
+        });
+
+        // Sessions filter dropdown toggle
+        document.getElementById('sessions-filter-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleFilterDropdown();
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('sessions-filter-dropdown');
+            const btn = document.getElementById('sessions-filter-btn');
+            if (dropdown && !dropdown.contains(e.target) && !btn?.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+
+        // Filter change handlers
+        document.getElementById('filter-type')?.addEventListener('change', (e) => {
+            this._sessionsFilter.type = e.target.value;
+            this.applySessionsFilter();
+        });
+        document.getElementById('filter-payout')?.addEventListener('change', (e) => {
+            this._sessionsFilter.payout = e.target.value;
+            this.applySessionsFilter();
+        });
+        document.getElementById('filter-date')?.addEventListener('change', (e) => {
+            this._sessionsFilter.date = e.target.value;
+            this.applySessionsFilter();
+        });
+
+        // Clear filters
+        document.getElementById('filter-clear-btn')?.addEventListener('click', () => this.clearSessionsFilter());
     },
 
     // ============ Auth ============
@@ -354,12 +400,18 @@ const App = {
     // ============ Sessions Table ============
 
     renderSessionsTable(sessions) {
+        // Cache sessions for re-rendering on sort/filter changes
+        this._cachedSessions = sessions;
+
         const tbody = document.getElementById('sessions-table-body');
         const empty = document.getElementById('sessions-empty');
         if (!tbody) return;
 
-        // Sort by submittedAt descending (newest first)
-        const sorted = [...sessions].sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+        // Apply filters
+        let filtered = this.filterSessions(sessions);
+
+        // Apply sorting
+        const sorted = this.sortSessions(filtered);
 
         if (sorted.length === 0) {
             tbody.innerHTML = '';
@@ -396,6 +448,142 @@ const App = {
         `}).join('');
 
         if (typeof lucide !== 'undefined') lucide.createIcons();
+        this.updateSortIndicators();
+    },
+
+    // Sort sessions based on current sort state
+    sortSessions(sessions) {
+        const { column, direction } = this._sessionsSort;
+        const mult = direction === 'asc' ? 1 : -1;
+
+        return [...sessions].sort((a, b) => {
+            let valA, valB;
+
+            switch (column) {
+                case 'date':
+                    valA = a.submittedAt || a.date || '';
+                    valB = b.submittedAt || b.date || '';
+                    return mult * valA.localeCompare(valB);
+                case 'type':
+                    return mult * (a.type || '').localeCompare(b.type || '');
+                case 'duration':
+                    return mult * ((parseFloat(a.duration) || 0) - (parseFloat(b.duration) || 0));
+                case 'earnings':
+                    return mult * ((parseFloat(a.earnings) || 0) - (parseFloat(b.earnings) || 0));
+                case 'projectId':
+                    return mult * (a.projectId || '').localeCompare(b.projectId || '');
+                case 'payout':
+                    // Sort by remaining time (expired first when asc)
+                    const cdA = getPayoutCountdown(a);
+                    const cdB = getPayoutCountdown(b);
+                    if (cdA.expired && !cdB.expired) return mult * -1;
+                    if (!cdA.expired && cdB.expired) return mult * 1;
+                    // Both pending: sort by submittedAt
+                    valA = a.submittedAt || '';
+                    valB = b.submittedAt || '';
+                    return mult * valA.localeCompare(valB);
+                default:
+                    return 0;
+            }
+        });
+    },
+
+    // Filter sessions based on current filter state
+    filterSessions(sessions) {
+        const { type, payout, date } = this._sessionsFilter;
+        const now = new Date();
+
+        return sessions.filter(s => {
+            // Type filter
+            if (type !== 'all' && s.type !== type) return false;
+
+            // Payout status filter
+            if (payout !== 'all') {
+                const countdown = getPayoutCountdown(s);
+                if (payout === 'available' && !countdown.expired) return false;
+                if (payout === 'pending' && countdown.expired) return false;
+            }
+
+            // Date range filter
+            if (date !== 'all') {
+                const sessionDate = new Date(s.submittedAt || s.date);
+                const daysAgo = (now - sessionDate) / (1000 * 60 * 60 * 24);
+                if (daysAgo > parseInt(date)) return false;
+            }
+
+            return true;
+        });
+    },
+
+    // Handle column header click for sorting
+    handleSessionSort(column) {
+        if (this._sessionsSort.column === column) {
+            // Toggle direction
+            this._sessionsSort.direction = this._sessionsSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            // New column, default to descending
+            this._sessionsSort.column = column;
+            this._sessionsSort.direction = 'desc';
+        }
+        this.renderSessionsTable(this._cachedSessions);
+    },
+
+    // Update sort indicator icons
+    updateSortIndicators() {
+        document.querySelectorAll('.sortable-header').forEach(th => {
+            const icon = th.querySelector('.sort-icon');
+            if (!icon) return;
+
+            if (th.dataset.sort === this._sessionsSort.column) {
+                // Active column
+                th.classList.add('text-violet-400');
+                icon.setAttribute('data-lucide', this._sessionsSort.direction === 'asc' ? 'chevron-up' : 'chevron-down');
+            } else {
+                // Inactive column
+                th.classList.remove('text-violet-400');
+                icon.setAttribute('data-lucide', 'chevrons-up-down');
+            }
+        });
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    },
+
+    // Toggle filter dropdown
+    toggleFilterDropdown() {
+        const dropdown = document.getElementById('sessions-filter-dropdown');
+        dropdown?.classList.toggle('hidden');
+    },
+
+    // Apply filters and re-render
+    applySessionsFilter() {
+        this.renderSessionsTable(this._cachedSessions);
+        this.updateFilterBadge();
+    },
+
+    // Update filter badge count
+    updateFilterBadge() {
+        const badge = document.getElementById('sessions-filter-badge');
+        if (!badge) return;
+
+        let count = 0;
+        if (this._sessionsFilter.type !== 'all') count++;
+        if (this._sessionsFilter.payout !== 'all') count++;
+        if (this._sessionsFilter.date !== 'all') count++;
+
+        if (count > 0) {
+            badge.textContent = count;
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+    },
+
+    // Clear all filters
+    clearSessionsFilter() {
+        this._sessionsFilter = { type: 'all', payout: 'all', date: 'all' };
+        document.getElementById('filter-type').value = 'all';
+        document.getElementById('filter-payout').value = 'all';
+        document.getElementById('filter-date').value = 'all';
+        this.applySessionsFilter();
     },
 
     // ============ Work Session Modal ============
