@@ -342,6 +342,14 @@ const App = {
         // Scan emails
         document.getElementById('scan-emails-btn')?.addEventListener('click', () => this.scanEmails());
 
+        // DA Import
+        document.getElementById('import-da-btn')?.addEventListener('click', () => this.openDAImportModal());
+        document.getElementById('close-da-import-modal')?.addEventListener('click', () => this.closeModal('da-import-modal'));
+        document.getElementById('da-import-modal-backdrop')?.addEventListener('click', () => this.closeModal('da-import-modal'));
+        document.getElementById('da-parse-btn')?.addEventListener('click', () => this.handleDAImport());
+        document.getElementById('da-import-back-btn')?.addEventListener('click', () => this.daImportShowInput());
+        document.getElementById('da-apply-corrections-btn')?.addEventListener('click', () => this.applyDACorrections());
+
         // Sessions table sorting
         document.querySelectorAll('.sortable-header').forEach(th => {
             th.addEventListener('click', () => this.handleSessionSort(th.dataset.sort));
@@ -1362,6 +1370,342 @@ const App = {
             toast.classList.add('toast-exit');
             setTimeout(() => toast.remove(), 300);
         }, 3000);
+    },
+
+    // ============ DA Import ============
+
+    openDAImportModal() {
+        const modal = document.getElementById('da-import-modal');
+        if (!modal) return;
+        // Reset state
+        document.getElementById('da-html-input').value = '';
+        this.daImportShowInput();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    },
+
+    daImportShowInput() {
+        document.getElementById('da-import-input-section')?.classList.remove('hidden');
+        document.getElementById('da-import-results')?.classList.add('hidden');
+    },
+
+    async handleDAImport() {
+        const html = document.getElementById('da-html-input')?.value?.trim();
+        if (!html) {
+            this.showToast('Please paste DA page HTML first', 'error');
+            return;
+        }
+
+        try {
+            const daEntries = this.parseDAHtml(html);
+            if (daEntries.length === 0) {
+                this.showToast('No paid work entries found in the HTML', 'warning');
+                return;
+            }
+
+            const results = await this.reconcileDAData(daEntries);
+            this.renderDAImportResults(results);
+
+            // Switch to results view
+            document.getElementById('da-import-input-section')?.classList.add('hidden');
+            document.getElementById('da-import-results')?.classList.remove('hidden');
+        } catch (error) {
+            console.error('DA import parse error:', error);
+            this.showToast('Failed to parse HTML. Make sure you copied the full page source.', 'error');
+        }
+    },
+
+    parseDAHtml(htmlString) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlString, 'text/html');
+        const rows = doc.querySelectorAll('tr[id^="row-"]');
+        const entries = [];
+
+        let currentProject = null;
+
+        rows.forEach(row => {
+            const rowClass = row.getAttribute('class') || '';
+            const isDateRow = rowClass.includes('tw-bg-[#E5D3EB]') || rowClass.includes('tw-border-primary-light-50');
+
+            // Check indent level to distinguish headers vs sub-items
+            const titleDiv = row.querySelector('[data-column-id="title"] div div');
+            const titleDivClass = titleDiv ? (titleDiv.getAttribute('class') || '') : '';
+            const isSubItem = titleDivClass.includes('tw-ml-10');
+            const isTopLevel = titleDivClass.includes('tw-ml-0') && !isSubItem;
+
+            // Get title text
+            const titleSpan = row.querySelector('[data-column-id="title"] span');
+            const title = titleSpan ? titleSpan.textContent.trim() : '';
+
+            // Get amount
+            const amountCell = row.querySelector('[data-column-id="amount"] > div');
+            const amountText = amountCell ? amountCell.textContent.trim() : '';
+            const amount = parseFloat(amountText.replace(/[$,]/g, '')) || 0;
+
+            // Get time/duration
+            const timeCell = row.querySelector('[data-column-id="time"] > div');
+            const timeText = timeCell ? timeCell.textContent.trim() : '';
+
+            // Get submitted timestamp
+            const timeEl = row.querySelector('[data-column-id="timeAgo"] time[datetime]');
+            const submittedMs = timeEl ? parseInt(timeEl.getAttribute('datetime')) : null;
+
+            if (isDateRow) {
+                currentProject = null;
+                return;
+            }
+
+            if (isTopLevel && !isSubItem && title !== 'Task Submission' && title !== 'Time Entry') {
+                // This is a project/task name header
+                currentProject = title;
+                return;
+            }
+
+            if (!isSubItem) return;
+
+            // Parse paid sub-items
+            if (title === 'Time Entry' && amount > 0 && submittedMs) {
+                // Project-type work (has duration)
+                let duration = 0;
+                const hMatch = timeText.match(/(\d+)h/);
+                const mMatch = timeText.match(/(\d+)min/);
+                if (hMatch) duration += parseInt(hMatch[1]);
+                if (mMatch) duration += parseInt(mMatch[1]) / 60;
+
+                entries.push({
+                    type: 'project',
+                    amount: Math.round(amount * 100) / 100,
+                    duration: Math.round(duration * 100) / 100,
+                    durationText: timeText,
+                    submittedAt: new Date(submittedMs).toISOString(),
+                    submittedAtMs: submittedMs,
+                    projectName: currentProject || ''
+                });
+            } else if (title === 'Task Submission' && amount > 0 && submittedMs) {
+                // Task-type work (no duration)
+                entries.push({
+                    type: 'task',
+                    amount: Math.round(amount * 100) / 100,
+                    duration: 0,
+                    durationText: '',
+                    submittedAt: new Date(submittedMs).toISOString(),
+                    submittedAtMs: submittedMs,
+                    projectName: currentProject || ''
+                });
+            }
+        });
+
+        return entries;
+    },
+
+    async reconcileDAData(daEntries) {
+        const sessions = await SheetsAPI.getWorkSessions();
+        const matched = [];
+        const corrections = [];
+        const unmatched = [];
+        const usedSessionIds = new Set();
+
+        for (const da of daEntries) {
+            const daDate = new Date(da.submittedAt);
+
+            // Find matching session: same amount, type, and close date
+            let bestMatch = null;
+            let bestTimeDiff = Infinity;
+
+            for (const session of sessions) {
+                if (usedSessionIds.has(session.id)) continue;
+
+                // Amount must match exactly (2 decimal places)
+                const sEarnings = Math.round(parseFloat(session.earnings) * 100) / 100;
+                if (sEarnings !== da.amount) continue;
+
+                // Type must match
+                if (session.type !== da.type) continue;
+
+                // Date must be within 1 day
+                const sessionDate = session.submittedAt ? new Date(session.submittedAt) : new Date(session.date);
+                const timeDiff = Math.abs(daDate - sessionDate);
+                const dayDiff = timeDiff / (1000 * 60 * 60 * 24);
+
+                if (dayDiff <= 1 && timeDiff < bestTimeDiff) {
+                    bestMatch = session;
+                    bestTimeDiff = timeDiff;
+                }
+            }
+
+            if (bestMatch) {
+                usedSessionIds.add(bestMatch.id);
+                const oldSubmitted = bestMatch.submittedAt ? new Date(bestMatch.submittedAt) : null;
+                const newSubmitted = new Date(da.submittedAt);
+                const timeDiffMin = oldSubmitted ? Math.abs(newSubmitted - oldSubmitted) / (1000 * 60) : Infinity;
+
+                if (timeDiffMin <= 5) {
+                    // Close enough, no correction needed
+                    matched.push({ da, session: bestMatch });
+                } else {
+                    // Needs correction
+                    corrections.push({
+                        da,
+                        session: bestMatch,
+                        oldSubmittedAt: bestMatch.submittedAt,
+                        newSubmittedAt: da.submittedAt
+                    });
+                }
+            } else {
+                unmatched.push({ da });
+            }
+        }
+
+        this._daCorrections = corrections;
+        return { matched, corrections, unmatched, total: daEntries.length };
+    },
+
+    renderDAImportResults(results) {
+        const { matched, corrections, unmatched, total } = results;
+
+        // Summary cards
+        const summaryEl = document.getElementById('da-import-summary');
+        summaryEl.innerHTML = `
+            <div class="bg-white/5 rounded-xl p-3 border border-white/10 text-center">
+                <div class="text-lg font-bold text-white">${total}</div>
+                <div class="text-xs text-slate-500">DA Entries</div>
+            </div>
+            <div class="bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20 text-center">
+                <div class="text-lg font-bold text-emerald-400">${matched.length}</div>
+                <div class="text-xs text-slate-500">Matched</div>
+            </div>
+            <div class="bg-yellow-500/10 rounded-xl p-3 border border-yellow-500/20 text-center">
+                <div class="text-lg font-bold text-yellow-400">${corrections.length}</div>
+                <div class="text-xs text-slate-500">Need Correction</div>
+            </div>
+            <div class="bg-blue-500/10 rounded-xl p-3 border border-blue-500/20 text-center">
+                <div class="text-lg font-bold text-blue-400">${unmatched.length}</div>
+                <div class="text-xs text-slate-500">New (Unmatched)</div>
+            </div>
+        `;
+
+        // Table rows
+        const tbody = document.getElementById('da-import-table-body');
+        const rows = [];
+
+        const fmtDate = (iso) => {
+            if (!iso) return '-';
+            const d = new Date(iso);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+                   d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        };
+
+        // Corrections first (yellow)
+        for (const c of corrections) {
+            rows.push(`
+                <tr class="bg-yellow-500/5">
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(c.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${c.da.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${c.da.type}</span>
+                    </td>
+                    <td class="px-3 py-2 text-sm text-right text-emerald-400">${formatCurrency(c.da.amount)}</td>
+                    <td class="px-3 py-2 text-sm text-right text-slate-400">${c.da.durationText || '-'}</td>
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(c.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm text-yellow-400">${fmtDate(c.oldSubmittedAt)}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400">Needs Correction</span>
+                    </td>
+                </tr>
+            `);
+        }
+
+        // Matched (green)
+        for (const m of matched) {
+            rows.push(`
+                <tr class="bg-emerald-500/5">
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(m.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${m.da.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${m.da.type}</span>
+                    </td>
+                    <td class="px-3 py-2 text-sm text-right text-emerald-400">${formatCurrency(m.da.amount)}</td>
+                    <td class="px-3 py-2 text-sm text-right text-slate-400">${m.da.durationText || '-'}</td>
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(m.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm text-slate-400">${fmtDate(m.session.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-400">Matched</span>
+                    </td>
+                </tr>
+            `);
+        }
+
+        // Unmatched (blue)
+        for (const u of unmatched) {
+            rows.push(`
+                <tr class="bg-blue-500/5">
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(u.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${u.da.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${u.da.type}</span>
+                    </td>
+                    <td class="px-3 py-2 text-sm text-right text-emerald-400">${formatCurrency(u.da.amount)}</td>
+                    <td class="px-3 py-2 text-sm text-right text-slate-400">${u.da.durationText || '-'}</td>
+                    <td class="px-3 py-2 text-sm text-white">${fmtDate(u.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm text-slate-500">-</td>
+                    <td class="px-3 py-2 text-sm">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400">New</span>
+                    </td>
+                </tr>
+            `);
+        }
+
+        tbody.innerHTML = rows.join('');
+
+        // Show/hide apply button
+        const applyBtn = document.getElementById('da-apply-corrections-btn');
+        if (corrections.length > 0) {
+            applyBtn.textContent = `Apply ${corrections.length} Correction${corrections.length > 1 ? 's' : ''}`;
+            applyBtn.classList.remove('hidden');
+        } else {
+            applyBtn.classList.add('hidden');
+        }
+    },
+
+    async applyDACorrections() {
+        const corrections = this._daCorrections;
+        if (!corrections || corrections.length === 0) return;
+
+        const btn = document.getElementById('da-apply-corrections-btn');
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+
+        try {
+            let applied = 0;
+            for (const c of corrections) {
+                const updates = { submittedAt: c.newSubmittedAt };
+
+                // Also update duration if DA has it and session doesn't
+                if (c.da.duration > 0 && (!c.session.duration || parseFloat(c.session.duration) === 0)) {
+                    updates.duration = c.da.duration;
+                    updates.hourlyRate = c.da.amount / c.da.duration;
+                }
+
+                // Add project name to notes if session has no notes
+                if (c.da.projectName && !c.session.notes) {
+                    updates.notes = c.da.projectName;
+                }
+
+                await SheetsAPI.updateWorkSession(c.session.id, updates);
+                applied++;
+            }
+
+            this.showToast(`Updated ${applied} session${applied > 1 ? 's' : ''} with corrected timestamps`, 'success');
+            this._daCorrections = [];
+
+            // Reload and close
+            await this.loadData();
+            this.closeModal('da-import-modal');
+        } catch (error) {
+            console.error('DA correction error:', error);
+            this.showToast('Error applying corrections', 'error');
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Apply Corrections';
     },
 
     // ============ Utilities ============

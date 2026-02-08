@@ -155,6 +155,10 @@
                     <i data-lucide="mail-search" class="w-4 h-4"></i>
                     <span>Scan Emails</span>
                 </button>
+                <button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white font-medium rounded-xl transition-all duration-300" id="import-da-btn">
+                    <i data-lucide="file-code-2" class="w-4 h-4"></i>
+                    <span>Import DA Data</span>
+                </button>
             </div>
         </section>
 
@@ -588,6 +592,68 @@
                         <button type="button" id="export-sessions-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Work Sessions</button>
                         <button type="button" id="export-payments-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Payments</button>
                         <button type="button" id="export-tax-csv" class="flex-1 py-2 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">Tax Summary</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DA Import Modal -->
+    <div class="fixed inset-0 z-50 hidden items-center justify-center p-4" id="da-import-modal">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="da-import-modal-backdrop"></div>
+        <div class="relative w-full max-w-3xl max-h-[90vh] bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl animate-slide-up modal-content flex flex-col">
+            <div class="flex items-center justify-between p-6 border-b border-white/10">
+                <h3 class="text-xl font-semibold text-white">Import DataAnnotation Data</h3>
+                <button class="p-2 hover:bg-white/10 rounded-lg transition-colors" id="close-da-import-modal">
+                    <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1 space-y-4">
+                <!-- Input Section -->
+                <div id="da-import-input-section">
+                    <p class="text-sm text-slate-400 mb-3">
+                        Open your DA work history page, right-click &rarr; "View Page Source" (Ctrl+U), then Ctrl+A to select all and Ctrl+C to copy. Paste below.
+                    </p>
+                    <textarea id="da-html-input" class="w-full h-40 bg-slate-800/50 border border-white/10 rounded-xl p-4 text-sm text-white font-mono placeholder-slate-600 focus:border-violet-500/50 focus:outline-none resize-none" placeholder="Paste DA page HTML source here..."></textarea>
+                    <button id="da-parse-btn" class="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300">
+                        <i data-lucide="scan-search" class="w-4 h-4"></i>
+                        <span>Parse &amp; Compare</span>
+                    </button>
+                </div>
+
+                <!-- Results Section (hidden initially) -->
+                <div id="da-import-results" class="hidden">
+                    <!-- Summary -->
+                    <div id="da-import-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    </div>
+
+                    <!-- Results Table -->
+                    <div class="overflow-x-auto rounded-xl border border-white/10">
+                        <table class="w-full text-left">
+                            <thead>
+                                <tr class="bg-white/5 text-xs text-slate-500 uppercase tracking-wider">
+                                    <th class="px-3 py-2">Date</th>
+                                    <th class="px-3 py-2">Type</th>
+                                    <th class="px-3 py-2 text-right">Amount</th>
+                                    <th class="px-3 py-2 text-right">Duration</th>
+                                    <th class="px-3 py-2">DA Submitted At</th>
+                                    <th class="px-3 py-2">Tracker Submitted At</th>
+                                    <th class="px-3 py-2">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="da-import-table-body" class="divide-y divide-white/5">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex items-center justify-between mt-4">
+                        <button id="da-import-back-btn" class="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors text-sm">
+                            Back
+                        </button>
+                        <button id="da-apply-corrections-btn" class="hidden px-4 py-2.5 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white font-semibold rounded-xl transition-all duration-300 text-sm">
+                            Apply Corrections
+                        </button>
                     </div>
                 </div>
             </div>
