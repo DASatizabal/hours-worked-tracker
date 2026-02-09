@@ -349,6 +349,7 @@ const App = {
         document.getElementById('da-parse-btn')?.addEventListener('click', () => this.handleDAImport());
         document.getElementById('da-import-back-btn')?.addEventListener('click', () => this.daImportShowInput());
         document.getElementById('da-apply-corrections-btn')?.addEventListener('click', () => this.applyDACorrections());
+        document.getElementById('da-add-new-btn')?.addEventListener('click', () => this.addDANewEntries());
 
         // Sessions table sorting
         document.querySelectorAll('.sortable-header').forEach(th => {
@@ -1558,6 +1559,7 @@ const App = {
         }
 
         this._daCorrections = corrections;
+        this._daUnmatched = unmatched;
         return { matched, corrections, unmatched, total: daEntries.length };
     },
 
@@ -1635,10 +1637,16 @@ const App = {
         }
 
         // Unmatched (blue)
-        for (const u of unmatched) {
+        for (let i = 0; i < unmatched.length; i++) {
+            const u = unmatched[i];
             rows.push(`
                 <tr class="bg-blue-500/5">
-                    <td class="px-3 py-2 text-sm text-white">${fmtDate(u.da.submittedAt)}</td>
+                    <td class="px-3 py-2 text-sm text-white">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked data-da-new-idx="${i}" class="da-new-checkbox accent-blue-500 w-4 h-4 cursor-pointer">
+                            ${fmtDate(u.da.submittedAt)}
+                        </label>
+                    </td>
                     <td class="px-3 py-2 text-sm">
                         <span class="px-2 py-0.5 rounded-full text-xs font-medium ${u.da.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${u.da.type}</span>
                     </td>
@@ -1662,6 +1670,26 @@ const App = {
             applyBtn.classList.remove('hidden');
         } else {
             applyBtn.classList.add('hidden');
+        }
+
+        // Show/hide add new button
+        const addNewBtn = document.getElementById('da-add-new-btn');
+        const updateAddNewBtn = () => {
+            const checked = document.querySelectorAll('.da-new-checkbox:checked').length;
+            if (checked > 0) {
+                addNewBtn.textContent = `Add ${checked} New Entr${checked > 1 ? 'ies' : 'y'}`;
+                addNewBtn.classList.remove('hidden');
+            } else {
+                addNewBtn.classList.add('hidden');
+            }
+        };
+        if (unmatched.length > 0) {
+            updateAddNewBtn();
+            tbody.addEventListener('change', (e) => {
+                if (e.target.classList.contains('da-new-checkbox')) updateAddNewBtn();
+            });
+        } else {
+            addNewBtn.classList.add('hidden');
         }
     },
 
@@ -1706,6 +1734,50 @@ const App = {
 
         btn.disabled = false;
         btn.textContent = 'Apply Corrections';
+    },
+
+    async addDANewEntries() {
+        const unmatched = this._daUnmatched;
+        if (!unmatched || unmatched.length === 0) return;
+
+        const checkedIdxs = Array.from(document.querySelectorAll('.da-new-checkbox:checked'))
+            .map(cb => parseInt(cb.dataset.daNewIdx));
+        if (checkedIdxs.length === 0) return;
+
+        const btn = document.getElementById('da-add-new-btn');
+        btn.disabled = true;
+        btn.textContent = 'Adding...';
+
+        try {
+            let added = 0;
+            for (const idx of checkedIdxs) {
+                const da = unmatched[idx].da;
+                const session = {
+                    date: da.submittedAt.slice(0, 10),
+                    duration: da.duration,
+                    type: da.type,
+                    projectId: '',
+                    notes: da.projectName || '',
+                    hourlyRate: da.duration > 0 ? da.amount / da.duration : 0,
+                    earnings: da.amount,
+                    submittedAt: da.submittedAt
+                };
+                await SheetsAPI.saveWorkSession(session);
+                added++;
+            }
+
+            this.showToast(`Added ${added} new session${added > 1 ? 's' : ''}`, 'success');
+            this._daUnmatched = [];
+
+            await this.loadData();
+            this.closeModal('da-import-modal');
+        } catch (error) {
+            console.error('DA add new entries error:', error);
+            this.showToast('Error adding new entries', 'error');
+        }
+
+        btn.disabled = false;
+        btn.textContent = 'Add New Entries';
     },
 
     // ============ Utilities ============
