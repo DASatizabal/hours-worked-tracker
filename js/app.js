@@ -1756,8 +1756,8 @@ const App = {
                     date: da.submittedAt.slice(0, 10),
                     duration: da.duration,
                     type: da.type,
-                    projectId: '',
-                    notes: da.projectName || '',
+                    projectId: da.projectName || '',
+                    notes: '',
                     hourlyRate: da.duration > 0 ? da.amount / da.duration : 0,
                     earnings: da.amount,
                     submittedAt: da.submittedAt
