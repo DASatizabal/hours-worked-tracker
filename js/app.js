@@ -1452,13 +1452,15 @@ const App = {
             const timeEl = row.querySelector('[data-column-id="timeAgo"] time[datetime]');
             const submittedMs = timeEl ? parseInt(timeEl.getAttribute('datetime')) : null;
 
-            if (isDateRow) {
+            // Date rows are purple bg AND tw-ml-0 (top-level)
+            if (isDateRow && isTopLevel) {
                 currentProject = null;
                 return;
             }
 
-            if (isTopLevel && !isSubItem && title !== 'Task Submission' && title !== 'Time Entry') {
-                // This is a project/task name header
+            // Project name headers are at tw-ml-5 (or tw-ml-0 without date bg)
+            const isProjectHeader = (isTopLevel || titleDivClass.includes('tw-ml-5')) && !isSubItem;
+            if (isProjectHeader && title !== 'Task Submission' && title !== 'Time Entry') {
                 currentProject = title;
                 return;
             }
