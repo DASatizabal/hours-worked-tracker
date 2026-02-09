@@ -1523,12 +1523,12 @@ const App = {
                 // Type must match
                 if (session.type !== da.type) continue;
 
-                // Date must be within 1 day
+                // Date must be within 3 days (manual entries can be logged well before/after actual submission)
                 const sessionDate = session.submittedAt ? new Date(session.submittedAt) : new Date(session.date);
                 const timeDiff = Math.abs(daDate - sessionDate);
                 const dayDiff = timeDiff / (1000 * 60 * 60 * 24);
 
-                if (dayDiff <= 1 && timeDiff < bestTimeDiff) {
+                if (dayDiff <= 3 && timeDiff < bestTimeDiff) {
                     bestMatch = session;
                     bestTimeDiff = timeDiff;
                 }
