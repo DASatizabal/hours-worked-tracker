@@ -96,9 +96,12 @@ function getNextPayoutDeadline(weekday) {
     return deadline;
 }
 
-// Calculate estimated paycheck amount (sessions that will be available for payout by deadline)
-function calculateNextPaycheck(sessions, deadline) {
-    let total = 0;
+// Calculate estimated paycheck amount (sessions in Submitted or Available for Payout by deadline)
+// Excludes money already paid out (In PayPal / Transferring / In Bank)
+function calculateNextPaycheck(sessions, deadline, emailPayouts) {
+    const now = new Date();
+    let submitted = 0;      // Still in payout waiting period but will clear by deadline
+    let availableNow = 0;   // Already past waiting period (available for payout now)
 
     for (const session of sessions) {
         if (!session.submittedAt) continue;
@@ -106,14 +109,25 @@ function calculateNextPaycheck(sessions, deadline) {
         const submittedAt = new Date(session.submittedAt);
         const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+        const earnings = parseFloat(session.earnings) || 0;
 
-        // If payout will be available by the deadline, include it
-        if (payoutExpected <= deadline) {
-            total += parseFloat(session.earnings) || 0;
+        if (now >= payoutExpected) {
+            // Already past waiting period
+            availableNow += earnings;
+        } else if (payoutExpected <= deadline) {
+            // Still waiting but will clear by deadline
+            submitted += earnings;
         }
     }
 
-    return total;
+    // Subtract DA payouts (money that moved from "Available" to "In PayPal")
+    const daPayoutTotal = (emailPayouts || [])
+        .filter(e => e.source === 'dataannotation')
+        .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+
+    const pendingPayout = Math.max(0, availableNow - daPayoutTotal);
+
+    return submitted + pendingPayout;
 }
 
 // Get short weekday name
@@ -456,7 +470,7 @@ const App = {
         // Est. Next Paycheck calculation
         const payoutWeekday = this.getPayoutWeekday();
         const deadline = getNextPayoutDeadline(payoutWeekday);
-        const nextPaycheckGross = calculateNextPaycheck(sessions, deadline);
+        const nextPaycheckGross = calculateNextPaycheck(sessions, deadline, emailPayouts);
         const nextPaycheckNet = TaxCalc.calcNet(nextPaycheckGross);
 
         document.getElementById('next-paycheck-gross').textContent = formatCurrency(nextPaycheckGross);
