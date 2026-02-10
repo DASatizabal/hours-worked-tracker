@@ -155,10 +155,32 @@ const Pipeline = {
         return totals;
     },
 
+    // Get estimated arrival text for transferring stage
+    getTransferArrival(emailPayouts) {
+        const now = new Date();
+        // Find in-progress transfers (estimated arrival still in the future)
+        const inProgress = emailPayouts
+            .filter(e => {
+                if (e.source !== 'paypal_transfer') return false;
+                const arrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
+                return arrival && now < arrival;
+            })
+            .sort((a, b) => (a.estimatedArrival || '').localeCompare(b.estimatedArrival || ''));
+
+        if (inProgress.length === 0) return null;
+
+        // Show the earliest arrival date
+        const arrival = new Date(inProgress[0].estimatedArrival);
+        const month = arrival.toLocaleString('en-US', { month: 'short' });
+        const day = arrival.getDate();
+        return `Est. ${month} ${day}`;
+    },
+
     // Render pipeline visualization
     renderPipeline(workSessions, emailPayouts) {
         const totals = this.calculateTotals(workSessions, emailPayouts);
         const cooldown = this.getPayoutCooldown(emailPayouts);
+        const transferArrival = this.getTransferArrival(emailPayouts);
         const container = document.getElementById('pipeline-stages');
         if (!container) return;
 
@@ -177,6 +199,11 @@ const Pipeline = {
             let extraInfo = '';
             if (stage === 'pending_payout') {
                 extraInfo = `<div class="text-xs ${cooldown.color} mt-1 font-medium">${cooldown.text}</div>`;
+            }
+
+            // Special handling for Transferring stage - show estimated arrival
+            if (stage === 'transferring' && isActive && transferArrival) {
+                extraInfo = `<div class="text-xs ${colors.text} mt-1 font-medium">${transferArrival}</div>`;
             }
 
             html += `
