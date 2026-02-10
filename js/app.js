@@ -135,6 +135,10 @@ const App = {
     // Cached sessions for re-rendering
     _cachedSessions: [],
 
+    // Polling state for automatic email scan detection
+    _lastCheckedScanTime: null,
+    _pollTimer: null,
+
     // Lock/unlock submit buttons during async operations
     setSubmitting(form, busy) {
         this._submitting = busy;
@@ -176,6 +180,7 @@ const App = {
             // Offline mode - skip auth
             this.hideAuthModal();
             await this.loadData();
+            if (SheetsAPI.isConfigured()) this.startPolling();
         }
 
         // Sync status indicator
@@ -192,9 +197,12 @@ const App = {
         name.textContent = FirebaseAuth.getUserFirstName();
 
         await this.loadData();
+        this.startPolling();
     },
 
     onSignedOut() {
+        this.stopPolling();
+        this._lastCheckedScanTime = null;
         document.getElementById('user-info').classList.add('hidden');
         document.getElementById('user-info').classList.remove('flex');
         SheetsAPI.clearSession();
@@ -1288,11 +1296,76 @@ const App = {
 
             this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers. ${newCount} new records saved.`, 'success');
 
+            // Sync polling marker so poller doesn't trigger redundant reload
+            const scanStatus = await SheetsAPI.getScanStatus();
+            if (scanStatus) this._lastCheckedScanTime = scanStatus.lastScanTime;
+
             // Reload data to reflect pipeline changes
             await this.loadData();
         } catch (error) {
             console.error('Email scan error:', error);
             this.showToast('Email scan failed. Check Apps Script deployment.', 'error');
+        }
+    },
+
+    // ============ Automatic Scan Polling ============
+
+    async checkForUpdates() {
+        if (!SheetsAPI.isConfigured()) return;
+
+        try {
+            const status = await SheetsAPI.getScanStatus();
+            if (!status || !status.lastScanTime) return;
+
+            // First check: seed the marker without reloading
+            if (this._lastCheckedScanTime === null) {
+                this._lastCheckedScanTime = status.lastScanTime;
+                return;
+            }
+
+            // Scan time hasn't changed
+            if (status.lastScanTime === this._lastCheckedScanTime) return;
+
+            // Scan time changed — update marker
+            this._lastCheckedScanTime = status.lastScanTime;
+
+            // Only reload if new records were found
+            if (status.lastScanNewRecords > 0) {
+                console.log(`Auto-sync: ${status.lastScanNewRecords} new email record(s) detected. Reloading data.`);
+                await this.loadData();
+                this.showToast(
+                    `Auto-sync: ${status.lastScanNewRecords} new email record${status.lastScanNewRecords > 1 ? 's' : ''} found`,
+                    'info'
+                );
+            }
+        } catch (error) {
+            console.warn('checkForUpdates error:', error);
+        }
+    },
+
+    startPolling() {
+        this.stopPolling();
+        this._pollTimer = setInterval(() => this.checkForUpdates(), CONFIG.POLL_INTERVAL_MS || 300000);
+        document.addEventListener('visibilitychange', this._handleVisibilityChange);
+    },
+
+    stopPolling() {
+        if (this._pollTimer) {
+            clearInterval(this._pollTimer);
+            this._pollTimer = null;
+        }
+        document.removeEventListener('visibilitychange', this._handleVisibilityChange);
+    },
+
+    _handleVisibilityChange() {
+        if (document.hidden) {
+            if (App._pollTimer) {
+                clearInterval(App._pollTimer);
+                App._pollTimer = null;
+            }
+        } else {
+            App.checkForUpdates();
+            App._pollTimer = setInterval(() => App.checkForUpdates(), CONFIG.POLL_INTERVAL_MS || 300000);
         }
     },
 

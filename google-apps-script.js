@@ -31,6 +31,15 @@ function doGet(e) {
       return createResponse(scanEmails());
     }
 
+    // Lightweight scan status check for client polling
+    if (action === 'getScanStatus') {
+      var props = PropertiesService.getScriptProperties();
+      return createResponse({
+        lastScanTime: props.getProperty('lastScanTime') || null,
+        lastScanNewRecords: parseInt(props.getProperty('lastScanNewRecords') || '0', 10)
+      });
+    }
+
     // Get records from a specific tab
     const tab = e.parameter.tab || 'WorkSessions';
     if (!TABS[tab]) {
@@ -201,6 +210,9 @@ function scanEmails() {
 
     if (!emailSheet) {
       results.errors.push('Missing EmailPayouts tab');
+      var props = PropertiesService.getScriptProperties();
+      props.setProperty('lastScanTime', new Date().toISOString());
+      props.setProperty('lastScanNewRecords', '0');
       return { results };
     }
 
@@ -230,6 +242,11 @@ function scanEmails() {
   } catch (error) {
     results.errors.push('Scan error: ' + error.message);
   }
+
+  // Store scan metadata for lightweight client polling
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('lastScanTime', new Date().toISOString());
+  props.setProperty('lastScanNewRecords', String(results.newRecords));
 
   return { results };
 }

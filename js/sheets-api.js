@@ -141,6 +141,26 @@ const SheetsAPI = {
     async saveCruisePayment(payment) { return this.save(CONFIG.SHEETS.CRUISE_PAYMENTS, payment); },
     async deleteCruisePayment(id) { return this.remove(CONFIG.SHEETS.CRUISE_PAYMENTS, id); },
 
+    // ============ Polling Support ============
+
+    async getScanStatus() {
+        if (!this.isConfigured() || CONFIG.USE_LOCAL_STORAGE) return null;
+        try {
+            const url = this.getActiveAppsScriptUrl() + '?action=getScanStatus';
+            const response = await fetch(url);
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (data.error) return null;
+            return {
+                lastScanTime: data.lastScanTime || null,
+                lastScanNewRecords: data.lastScanNewRecords || 0
+            };
+        } catch (error) {
+            console.warn('getScanStatus failed:', error);
+            return null;
+        }
+    },
+
     // ============ Google Apps Script Methods ============
 
     async _getFromSheets(tab) {
