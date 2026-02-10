@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.5.2
+ * VERSION: 1.7.8
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -165,7 +165,7 @@ function deleteRecord(tab, id) {
 // ============ Email Scanning ============
 
 function scanEmails() {
-  const results = { daPayouts: 0, paypalTransfers: 0, newRecords: 0, errors: [] };
+  const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, newRecords: 0, errors: [] };
 
   try {
     // Scan DA payout emails (last 30 days) - money moved to PayPal
@@ -204,6 +204,24 @@ function scanEmails() {
       });
     });
 
+    // Scan Chase deposit emails (last 30 days) - money confirmed in bank
+    const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
+    const chaseDeposits = [];
+
+    chaseThreads.forEach(thread => {
+      thread.getMessages().forEach(msg => {
+        try {
+          const parsed = parseChaseDepositEmail(msg);
+          if (parsed) {
+            chaseDeposits.push(parsed);
+            results.chaseDeposits++;
+          }
+        } catch (err) {
+          results.errors.push('Chase parse error: ' + err.message);
+        }
+      });
+    });
+
     // Save to EmailPayouts tab
     const sheet = SpreadsheetApp.openById(SHEET_ID);
     const emailSheet = sheet.getSheetByName('EmailPayouts');
@@ -238,6 +256,22 @@ function scanEmails() {
         results.newRecords++;
       }
     });
+
+    // Save Chase deposit records
+    chaseDeposits.forEach(cd => {
+      if (!existingEmails.has(cd.chaseMessageId + '_chase')) {
+        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        emailSheet.appendRow(['chase_deposit', cd.chaseMessageId, cd.amount, cd.receivedAt, '', '', id]);
+        existingEmails.set(cd.chaseMessageId + '_chase', id);
+        results.newRecords++;
+      }
+    });
+
+    // Match Chase deposits to in-progress PayPal transfers
+    // When a Chase deposit amount matches a transferring PayPal amount,
+    // update the PayPal transfer's EstimatedArrival to the deposit date
+    // so the pipeline immediately moves it to "In Bank"
+    matchChaseDepositsToTransfers(emailSheet, chaseDeposits);
 
   } catch (error) {
     results.errors.push('Scan error: ' + error.message);
@@ -336,6 +370,58 @@ function parsePayPalTransferEmail(msg) {
   };
 }
 
+function parseChaseDepositEmail(msg) {
+  const body = msg.getPlainBody() || msg.getBody();
+  const date = msg.getDate().toISOString();
+
+  // Extract amount (e.g., "$300.00")
+  const amountMatch = body.match(/\$([0-9,]+\.?\d*)/);
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
+
+  if (amount <= 0) return null;
+
+  return {
+    source: 'chase_deposit',
+    chaseMessageId: 'chase_' + msg.getId(),
+    amount,
+    receivedAt: date
+  };
+}
+
+function matchChaseDepositsToTransfers(emailSheet, chaseDeposits) {
+  if (chaseDeposits.length === 0) return;
+
+  const now = new Date();
+  const data = emailSheet.getDataRange().getValues();
+  // Column indices: Source=0, DAPaymentId=1, Amount=2, ReceivedAt=3, PaypalTransactionId=4, EstimatedArrival=5, ID=6
+
+  // Build list of Chase deposit amounts for matching
+  const depositAmounts = chaseDeposits.map(cd => cd.amount);
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] !== 'paypal_transfer') continue;
+
+    const transferAmount = parseFloat(data[i][2]) || 0;
+    const estimatedArrival = data[i][5] ? new Date(data[i][5]) : null;
+
+    // Only match transfers still "in progress" (estimated arrival in the future)
+    if (!estimatedArrival || now >= estimatedArrival) continue;
+
+    // Check if any Chase deposit matches this transfer amount
+    const matchIdx = depositAmounts.indexOf(transferAmount);
+    if (matchIdx !== -1) {
+      // Update EstimatedArrival to the Chase deposit date (in the past) so pipeline sees it as "In Bank"
+      const depositDate = chaseDeposits[matchIdx].receivedAt;
+      emailSheet.getRange(i + 1, 6).setValue(depositDate); // Column 6 = EstimatedArrival (1-indexed)
+
+      // Remove matched deposit so it doesn't match again
+      depositAmounts.splice(matchIdx, 1);
+      chaseDeposits.splice(matchIdx, 1);
+      if (chaseDeposits.length === 0) break;
+    }
+  }
+}
+
 function getExistingEmailPayouts(emailSheet) {
   // Column indices: Source=0, DAPaymentId=1, Amount=2, ReceivedAt=3, PaypalTransactionId=4, EstimatedArrival=5, ID=6
   const existing = new Map();
@@ -347,6 +433,7 @@ function getExistingEmailPayouts(emailSheet) {
     const id = data[i][6];
     if (source === 'dataannotation' && daId) existing.set(daId + '_da', id);
     if (source === 'paypal_transfer' && ppTxn) existing.set(ppTxn + '_pptx', id);
+    if (source === 'chase_deposit' && daId) existing.set(daId + '_chase', id);
   }
   return existing;
 }

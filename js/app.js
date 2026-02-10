@@ -1306,9 +1306,10 @@ const App = {
             const results = data.results || {};
             const daCount = results.daPayouts || 0;
             const ptCount = results.paypalTransfers || 0;
+            const chaseCount = results.chaseDeposits || 0;
             const newCount = results.newRecords || 0;
 
-            this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers. ${newCount} new records saved.`, 'success');
+            this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers, ${chaseCount} deposits. ${newCount} new records saved.`, 'success');
 
             // Sync polling marker so poller doesn't trigger redundant reload
             const scanStatus = await SheetsAPI.getScanStatus();
