@@ -1,7 +1,7 @@
 # Hours Worked Tracker - TODO
 
 ## Open Items (USER ACTION NEEDED)
-- [ ] **Deploy v1.7.8 google-apps-script.js** — Chase deposit scanning, version bump
+- [x] **Deploy v1.7.8 google-apps-script.js** — Chase deposit scanning, version bump
 - [ ] **Update Google Sheet tabs** (one-time cleanup):
   - Remove StartTime, EndTime columns from WorkSessions tab
   - Remove Payments tab (optional - no longer used)
