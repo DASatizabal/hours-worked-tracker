@@ -4,7 +4,52 @@
 - [ ] **Deploy v1.8.0 google-apps-script.js** — upsertSetting endpoint for payday sync
 - [ ] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
 - [ ] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
-- [ ] **Set up Windows Task Scheduler** — daily trigger running `python tools/da_scraper.py --auto`
+- [ ] **Install Python dependencies** — `pip install playwright python-dotenv requests && playwright install chromium`
+- [ ] **Set up Windows Task Scheduler** — daily trigger (see setup instructions below)
+
+## DA Scraper Setup Instructions
+
+### 1. Deploy Apps Script
+Copy the updated `google-apps-script.js` into your Apps Script editor and redeploy.
+
+### 2. Create `tools/.env`
+Copy from `.env.example` and fill in your credentials:
+```
+DA_EMAIL=your_email@example.com
+DA_PASSWORD=your_password
+APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbw.../exec
+```
+
+### 3. Install Python dependencies
+```
+pip install playwright python-dotenv requests
+playwright install chromium
+```
+
+### 4. Save payday in the app
+Open Settings in the tracker app and click Save. This pushes the payday weekday to Google Sheets so the scraper can read it.
+
+### 5. Set up Windows Task Scheduler
+1. Open Task Scheduler > Create Basic Task
+2. Name: "DA Payment Scrape"
+3. Trigger: **Daily**, pick a morning time (e.g., 8:00 AM)
+4. Action: Start a Program
+   - Program: `python`
+   - Arguments: `"L:\David's Folder\Claude Projects\hours-worked-tracker\tools\da_scraper.py" --auto`
+   - Start in: `"L:\David's Folder\Claude Projects\hours-worked-tracker\tools"`
+
+The script runs daily but checks Google Sheets for your payday setting. On non-payday it exits immediately. On payday it scrapes DA, auto-imports into the tracker, and saves an HTML backup to `tools/da_html_exports/`.
+
+### Manual usage
+```
+python tools/da_scraper.py              # Full flow: scrape + auto-import (checks payday)
+python tools/da_scraper.py --force      # Run regardless of payday
+python tools/da_scraper.py --html-only  # Just save HTML, skip import
+python tools/da_scraper.py --show-paid  # Include already-paid entries
+python tools/da_scraper.py --auto       # Unattended: headless, no prompts
+```
+
+Logs are saved to `tools/logs/`.
 
 ## v1.8.x Features (COMPLETED)
 - [x] Automated weekly DA scraper with payday-aware scheduling (v1.8.0)
