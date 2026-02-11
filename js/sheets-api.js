@@ -137,6 +137,32 @@ const SheetsAPI = {
     async getSettings() { return this.getAll(CONFIG.SHEETS.SETTINGS); },
     async saveSetting(setting) { return this.save(CONFIG.SHEETS.SETTINGS, setting); },
 
+    async saveSettingByKey(key, value) {
+        if (this.isConfigured() && !CONFIG.USE_LOCAL_STORAGE) {
+            try {
+                const url = this.getActiveAppsScriptUrl();
+                await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({ action: 'upsertSetting', tab: 'Settings', key, value }),
+                    redirect: 'follow'
+                });
+            } catch (error) {
+                console.error('Error saving setting:', error);
+            }
+        }
+    },
+
+    async getSettingByKey(key, defaultValue) {
+        try {
+            const settings = await this.getSettings();
+            const found = settings.find(s => s.key === key);
+            return found ? found.value : defaultValue;
+        } catch (error) {
+            return defaultValue;
+        }
+    },
+
     async getCruisePayments() { return this.getAll(CONFIG.SHEETS.CRUISE_PAYMENTS); },
     async saveCruisePayment(payment) { return this.save(CONFIG.SHEETS.CRUISE_PAYMENTS, payment); },
     async deleteCruisePayment(id) { return this.remove(CONFIG.SHEETS.CRUISE_PAYMENTS, id); },

@@ -1,7 +1,16 @@
 # Hours Worked Tracker - TODO
 
-## Open Items
-- No open items
+## Open Items (USER ACTION NEEDED)
+- [ ] **Deploy v1.8.0 google-apps-script.js** — upsertSetting endpoint for payday sync
+- [ ] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
+- [ ] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
+- [ ] **Set up Windows Task Scheduler** — daily trigger running `python tools/da_scraper.py --auto`
+
+## v1.8.x Features (COMPLETED)
+- [x] Automated weekly DA scraper with payday-aware scheduling (v1.8.0)
+- [x] Full browser auto-import: scrape → parse → apply corrections → add new entries
+- [x] Payday setting synced to Google Sheets for scraper access
+- [x] Apps Script upsertSetting endpoint for key/value settings
 
 ## Completed Housekeeping
 - [x] Deploy v1.7.8 google-apps-script.js — Chase deposit scanning, version bump

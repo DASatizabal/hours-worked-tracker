@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.7.8
+ * VERSION: 1.8.0
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -93,6 +93,8 @@ function doPost(e) {
       return updateRecord(tab, data.id, data.updates);
     } else if (action === 'delete') {
       return deleteRecord(tab, data.id);
+    } else if (action === 'upsertSetting' && tab === 'Settings') {
+      return upsertSetting(data.key, data.value);
     }
 
     return createResponse({ error: 'Unknown action: ' + action }, 400);
@@ -160,6 +162,24 @@ function deleteRecord(tab, id) {
   }
 
   return createResponse({ error: 'Record not found: ' + id }, 404);
+}
+
+function upsertSetting(key, value) {
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Settings');
+  if (!sheet) return createResponse({ error: 'Settings tab not found' }, 404);
+
+  const data = sheet.getDataRange().getValues();
+  // Column 0 = Key, Column 1 = Value
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === key) {
+      sheet.getRange(i + 1, 2).setValue(value);
+      return createResponse({ success: true, action: 'updated', key, value });
+    }
+  }
+
+  // Key not found — append new row
+  sheet.appendRow([key, value]);
+  return createResponse({ success: true, action: 'created', key, value });
 }
 
 // ============ Email Scanning ============

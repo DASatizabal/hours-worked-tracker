@@ -1248,6 +1248,7 @@ const App = {
         if (taskHours > 0) CONFIG.TASK_PAYOUT_HOURS = taskHours;
         if (payoutWeekday >= 0 && payoutWeekday <= 6) {
             localStorage.setItem('hwt_payout_weekday', payoutWeekday.toString());
+            SheetsAPI.saveSettingByKey('payoutWeekday', payoutWeekday.toString());
         }
 
         this.showToast('Settings saved', 'success');
