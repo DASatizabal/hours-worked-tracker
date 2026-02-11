@@ -1,6 +1,7 @@
 # Hours Worked Tracker - TODO
 
 ## Open Items (USER ACTION NEEDED)
+- [ ] **Deploy v1.7.8 google-apps-script.js** — Chase deposit scanning, version bump
 - [ ] **Update Google Sheet tabs** (one-time cleanup):
   - Remove StartTime, EndTime columns from WorkSessions tab
   - Remove Payments tab (optional - no longer used)
@@ -16,6 +17,7 @@
 - [x] Smart polling to auto-sync when server email scan finds new data (v1.7.5)
 - [x] Fix Est. Next Paycheck to exclude already-paid-out amounts (v1.7.6)
 - [x] Estimated arrival date under Transferring pipeline stage (v1.7.7)
+- [x] Chase deposit email scanning to confirm bank arrivals (v1.7.8)
 
 ## v1.6.x Features (COMPLETED)
 - [x] Est. Next Paycheck card with configurable payout day (v1.6.0)
