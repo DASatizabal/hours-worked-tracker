@@ -1,12 +1,13 @@
 # Hours Worked Tracker - TODO
 
-## Open Items (USER ACTION NEEDED)
-- [x] **Deploy v1.7.8 google-apps-script.js** — Chase deposit scanning, version bump
-- [ ] **Update Google Sheet tabs** (one-time cleanup):
-  - Remove StartTime, EndTime columns from WorkSessions tab
-  - Remove Payments tab (optional - no longer used)
-- [ ] Clean up old manually-entered data — remove test entries, verify all have IDs
-- [ ] Test edit/delete sessions — verify pre-fill works, delete removes from sheet
+## Open Items
+- No open items
+
+## Completed Housekeeping
+- [x] Deploy v1.7.8 google-apps-script.js — Chase deposit scanning, version bump
+- [x] Update Google Sheet tabs — removed StartTime/EndTime columns and Payments tab
+- [x] Clean up old manually-entered data — removed test entries, verified IDs
+- [x] Test edit/delete sessions — pre-fill and sheet deletion verified
 
 ## v1.7.x Features (COMPLETED)
 - [x] DA HTML import to reconcile work sessions and correct submittedAt timestamps (v1.7.0)
