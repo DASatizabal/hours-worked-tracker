@@ -37,10 +37,14 @@ Scheduling (Windows Task Scheduler):
 import os
 import sys
 import json
+import re
+import time
+import imaplib
+import email as email_lib
 import argparse
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -50,6 +54,7 @@ load_dotenv(SCRIPT_DIR / '.env')
 
 DA_EMAIL = os.getenv("DA_EMAIL")
 DA_PASSWORD = os.getenv("DA_PASSWORD")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
 DA_PAYMENTS_URL = "https://app.dataannotation.tech/workers/payments"
 TRACKER_URL = "https://dasatizabal.github.io/hours-worked-tracker/"
@@ -106,6 +111,106 @@ def is_today_payday(payday_weekday):
     return today_js == payday_weekday
 
 
+def fetch_verification_code_from_gmail(max_retries=5, retry_delay=5):
+    """Fetch a verification code from Gmail via IMAP.
+
+    Searches recent emails from DataAnnotation for a numeric verification code.
+    Retries several times since the email may take a few seconds to arrive.
+    """
+    if not GMAIL_APP_PASSWORD:
+        log.error("GMAIL_APP_PASSWORD not set in .env — cannot fetch verification code.")
+        return None
+
+    sender_patterns = ["dataannotation", "noreply@"]
+    code_pattern = re.compile(r'\b(\d{6})\b')
+
+    for attempt in range(1, max_retries + 1):
+        log.info(f"  -> Checking Gmail for verification code (attempt {attempt}/{max_retries})...")
+        try:
+            mail = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+            mail.login(DA_EMAIL, GMAIL_APP_PASSWORD)
+            mail.select("INBOX")
+
+            # Search for recent emails (last 2 minutes)
+            since_date = (datetime.now() - timedelta(minutes=5)).strftime("%d-%b-%Y")
+            _, msg_ids = mail.search(None, f'(SINCE "{since_date}")')
+
+            if not msg_ids[0]:
+                log.info(f"     No recent emails found.")
+                mail.logout()
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                continue
+
+            # Check emails from newest to oldest
+            id_list = msg_ids[0].split()
+            for msg_id in reversed(id_list):
+                _, msg_data = mail.fetch(msg_id, "(RFC822)")
+                raw_email = msg_data[0][1]
+                msg = email_lib.message_from_bytes(raw_email)
+
+                # Check sender
+                sender = (msg.get("From", "") or "").lower()
+                subject = (msg.get("Subject", "") or "").lower()
+                if not any(p in sender for p in sender_patterns) and "verification" not in subject and "code" not in subject:
+                    continue
+
+                # Check email date is within the last 3 minutes
+                date_str = msg.get("Date", "")
+                try:
+                    msg_date = email_lib.utils.parsedate_to_datetime(date_str)
+                    if msg_date.tzinfo is None:
+                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+                    age = datetime.now(timezone.utc) - msg_date
+                    if age > timedelta(minutes=5):
+                        continue
+                except Exception:
+                    pass  # If we can't parse date, still try the email
+
+                # Extract body text
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        if content_type == "text/plain":
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                body = payload.decode("utf-8", errors="replace")
+                                break
+                        elif content_type == "text/html" and not body:
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                body = payload.decode("utf-8", errors="replace")
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        body = payload.decode("utf-8", errors="replace")
+
+                # Search for 6-digit code in subject and body
+                for text in [msg.get("Subject", ""), body]:
+                    match = code_pattern.search(text)
+                    if match:
+                        code = match.group(1)
+                        log.info(f"  -> Found verification code: {code}")
+                        mail.logout()
+                        return code
+
+            mail.logout()
+
+        except imaplib.IMAP4.error as e:
+            log.error(f"  -> IMAP error: {e}")
+            return None
+        except Exception as e:
+            log.warning(f"  -> Gmail fetch error: {e}")
+
+        if attempt < max_retries:
+            log.info(f"     Code not found yet, retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+
+    log.error("  -> Could not find verification code in Gmail after all retries.")
+    return None
+
+
 def login_to_da(page):
     """Navigate to DA and log in with email/password."""
     log.info("[1/6] Navigating to DA payments page...")
@@ -124,8 +229,61 @@ def login_to_da(page):
 
         submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
         submit_btn.click()
-        page.wait_for_url("**/workers/**", timeout=30000)
-        log.info("  -> Login successful!")
+
+        # Wait a moment for the page to respond
+        page.wait_for_timeout(3000)
+
+        # Check if we landed on workers page or got a verification prompt
+        if "/workers/" in page.url:
+            log.info("  -> Login successful (no verification needed)!")
+        else:
+            # Look for a verification/OTP code input field
+            code_input = page.locator(
+                'input[type="text"][name*="code"], '
+                'input[type="number"][name*="code"], '
+                'input[type="tel"], '
+                'input[name*="otp"], '
+                'input[name*="verification"], '
+                'input[placeholder*="code" i], '
+                'input[placeholder*="verif" i], '
+                'input[aria-label*="code" i], '
+                'input[aria-label*="verif" i]'
+            ).first
+
+            try:
+                code_input.wait_for(state="visible", timeout=5000)
+                log.info("  -> Verification code prompt detected!")
+
+                # Fetch the code from Gmail
+                code = fetch_verification_code_from_gmail()
+                if not code:
+                    log.error("  -> Failed to get verification code. Cannot proceed.")
+                    raise Exception("Verification code required but could not be fetched from Gmail.")
+
+                # Enter the code
+                code_input.fill(code)
+                log.info(f"  -> Entered verification code.")
+
+                # Submit the code
+                verify_btn = page.locator('button[type="submit"], input[type="submit"]').first
+                verify_btn.click()
+
+                # Wait for redirect to workers page
+                page.wait_for_url("**/workers/**", timeout=30000)
+                log.info("  -> Login successful (with verification code)!")
+
+            except PWTimeout:
+                # No verification input found — maybe the page is still loading
+                # or it's a different prompt. Try waiting for workers URL directly.
+                log.info("  -> No verification input found, waiting for redirect...")
+                try:
+                    page.wait_for_url("**/workers/**", timeout=15000)
+                    log.info("  -> Login successful!")
+                except PWTimeout:
+                    raise Exception(
+                        f"Login failed — stuck at {page.url}. "
+                        "Not a verification prompt and not redirecting to /workers/."
+                    )
     else:
         log.info("[2/6] Already logged in, skipping.")
 

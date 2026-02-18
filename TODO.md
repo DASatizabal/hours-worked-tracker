@@ -1,10 +1,10 @@
 # Hours Worked Tracker - TODO
 
 ## Open Items (USER ACTION NEEDED)
-- [ ] **Deploy v1.8.0 google-apps-script.js** — upsertSetting endpoint for payday sync
-- [ ] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
-- [ ] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
-- [ ] **Install Python dependencies** — `pip install playwright python-dotenv requests && playwright install chromium`
+- [x] **Deploy v1.8.0 google-apps-script.js** — upsertSetting endpoint for payday sync
+- [x] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
+- [x] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
+- [x] **Install Python dependencies** — `pip install playwright python-dotenv requests && playwright install chromium`
 - [ ] **Set up Windows Task Scheduler** — daily trigger (see setup instructions below)
 
 ## DA Scraper Setup Instructions
