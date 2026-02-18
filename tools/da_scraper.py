@@ -691,7 +691,7 @@ def import_to_sheets(corrections, unmatched):
             if result.get('error'):
                 log.error(f"  -> Correction failed for {session['id']}: {result['error']}")
             else:
-                log.info(f"  -> Corrected {session['id']}: submittedAt → {c['newSubmittedAt'][:19]}")
+                log.info(f"  -> Corrected {session['id']}: submittedAt -> {c['newSubmittedAt'][:19]}")
         except Exception as e:
             log.error(f"  -> Correction request failed for {session['id']}: {e}")
 
