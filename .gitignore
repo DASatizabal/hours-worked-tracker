@@ -1,3 +1,4 @@
 .claude/settings.local.json
 tools/.env
 tools/da_html_exports/
+tools/*.bat
