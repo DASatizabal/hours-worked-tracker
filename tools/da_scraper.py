@@ -2,11 +2,11 @@
 DA Payment Scraper & Auto-Importer
 ===================================
 Logs into DataAnnotation Tech, expands all payment rows,
-extracts the HTML, and imports it into the Hours Worked Tracker
-for automatic reconciliation.
+extracts the HTML, parses entries, and imports them directly
+into Google Sheets via the Apps Script API for automatic reconciliation.
 
 Setup:
-    pip install playwright python-dotenv requests
+    pip install playwright python-dotenv requests beautifulsoup4
     playwright install chromium
 
 Usage:
@@ -45,6 +45,8 @@ import argparse
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -57,7 +59,6 @@ DA_PASSWORD = os.getenv("DA_PASSWORD")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
 DA_PAYMENTS_URL = "https://app.dataannotation.tech/workers/payments"
-TRACKER_URL = "https://dasatizabal.github.io/hours-worked-tracker/"
 HTML_OUTPUT_DIR = SCRIPT_DIR / "da_html_exports"
 
 # Logging
@@ -83,7 +84,6 @@ def get_payday_from_sheets():
         return DEFAULT_PAYOUT_WEEKDAY
 
     try:
-        import requests
         url = APPS_SCRIPT_URL + '?tab=Settings'
         response = requests.get(url, timeout=15, allow_redirects=True)
         data = response.json()
@@ -418,106 +418,322 @@ def save_html_to_file(html):
     return filepath
 
 
-def import_into_tracker(context, html, auto_mode=False):
-    """Open the Hours Worked Tracker, paste HTML, and auto-apply import."""
-    log.info("[6/6] Importing into Hours Worked Tracker...")
-    page = context.new_page()
-    page.goto(TRACKER_URL, wait_until="networkidle", timeout=30000)
-    page.wait_for_timeout(3000)
+def parse_da_html(html):
+    """Parse DA payments HTML and extract work entries.
 
-    # Click the DA Import button
-    da_btn_selectors = [
-        '#import-da-btn',
-        'button:has-text("DA Import")',
-        'button:has-text("Import DA")',
-        '[onclick*="openDAImportModal"]',
-    ]
+    Replicates the JS parseDAHtml() logic using BeautifulSoup.
+    Returns a list of dicts with: type, amount, duration, submittedAt, projectName
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    rows = soup.select('tr[id^="row-"]')
+    entries = []
+    current_project = None
 
-    clicked = False
-    for selector in da_btn_selectors:
+    for row in rows:
+        row_class = row.get('class', [])
+        row_class_str = ' '.join(row_class) if isinstance(row_class, list) else str(row_class)
+        is_date_row = 'tw-bg-[#E5D3EB]' in row_class_str or 'tw-border-primary-light-50' in row_class_str
+
+        # Check indent level to distinguish headers vs sub-items
+        title_div = row.select_one('[data-column-id="title"] div div')
+        title_div_class = ' '.join(title_div.get('class', [])) if title_div else ''
+        is_sub_item = 'tw-ml-10' in title_div_class
+        is_top_level = 'tw-ml-0' in title_div_class and not is_sub_item
+
+        # Get title text
+        title_span = row.select_one('[data-column-id="title"] span')
+        title = title_span.get_text(strip=True) if title_span else ''
+
+        # Get amount
+        amount_cell = row.select_one('[data-column-id="amount"] > div')
+        amount_text = amount_cell.get_text(strip=True) if amount_cell else ''
         try:
-            btn = page.locator(selector).first
-            if btn.is_visible(timeout=2000):
-                btn.click()
-                page.wait_for_timeout(1000)
-                clicked = True
-                log.info("  -> DA Import modal opened.")
-                break
-        except Exception:
+            amount = float(re.sub(r'[$,]', '', amount_text))
+        except (ValueError, TypeError):
+            amount = 0.0
+
+        # Get time/duration text
+        time_cell = row.select_one('[data-column-id="time"] > div')
+        time_text = time_cell.get_text(strip=True) if time_cell else ''
+
+        # Get submitted timestamp (epoch ms in datetime attr)
+        time_el = row.select_one('[data-column-id="timeAgo"] time[datetime]')
+        submitted_ms = None
+        if time_el and time_el.get('datetime'):
+            try:
+                submitted_ms = int(time_el['datetime'])
+            except (ValueError, TypeError):
+                pass
+
+        # Date rows are purple bg AND tw-ml-0 (top-level)
+        if is_date_row and is_top_level:
+            current_project = None
             continue
 
-    if not clicked:
-        if auto_mode:
-            log.error("  -> Could not find DA Import button. Aborting auto-import.")
-            return page
-        else:
-            log.warning("  -> Could not find DA Import button automatically.")
-            input("     Open the modal manually, then press Enter...")
+        # Project name headers are at tw-ml-5 (or tw-ml-0 without date bg)
+        is_project_header = (is_top_level or 'tw-ml-5' in title_div_class) and not is_sub_item
+        if is_project_header and title not in ('Task Submission', 'Time Entry'):
+            current_project = title
+            continue
 
-    # Paste HTML into the textarea
-    page.evaluate("""(html) => {
-        const textarea = document.getElementById('da-html-input');
-        if (textarea) {
-            textarea.value = html;
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-            textarea.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-    }""", html)
-    log.info("  -> HTML pasted into import field.")
+        if not is_sub_item:
+            continue
 
-    # Click "Parse & Compare"
+        # Parse sub-items
+        if title == 'Time Entry' and amount > 0 and submitted_ms:
+            # Project-type work (has duration)
+            duration = 0.0
+            h_match = re.search(r'(\d+)h', time_text)
+            m_match = re.search(r'(\d+)min', time_text)
+            if h_match:
+                duration += int(h_match.group(1))
+            if m_match:
+                duration += int(m_match.group(1)) / 60.0
+
+            submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
+            entries.append({
+                'type': 'project',
+                'amount': round(amount, 2),
+                'duration': round(duration, 2),
+                'durationText': time_text,
+                'submittedAt': submitted_dt.isoformat(),
+                'submittedAtMs': submitted_ms,
+                'projectName': current_project or ''
+            })
+
+        elif title == 'Task Submission' and amount > 0 and submitted_ms:
+            # Task-type work (no duration)
+            submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
+            entries.append({
+                'type': 'task',
+                'amount': round(amount, 2),
+                'duration': 0,
+                'durationText': '',
+                'submittedAt': submitted_dt.isoformat(),
+                'submittedAtMs': submitted_ms,
+                'projectName': current_project or ''
+            })
+
+    log.info(f"  -> Parsed {len(entries)} DA entries from HTML")
+    return entries
+
+
+def fetch_existing_sessions():
+    """Fetch existing work sessions from Google Sheets via Apps Script."""
+    if not APPS_SCRIPT_URL:
+        log.error("APPS_SCRIPT_URL not set in .env — cannot fetch sessions.")
+        return []
+
     try:
-        parse_btn = page.locator('#da-parse-btn').first
-        parse_btn.click()
-        log.info("  -> Clicked 'Parse & Compare'.")
-        # Wait for results to render
-        page.wait_for_selector('#da-import-results:not(.hidden)', timeout=10000)
-        page.wait_for_timeout(1000)
+        url = APPS_SCRIPT_URL + '?tab=WorkSessions'
+        response = requests.get(url, timeout=30, allow_redirects=True)
+        data = response.json()
+        records = data.get('records', [])
+        log.info(f"  -> Fetched {len(records)} existing work sessions from Sheets")
+        return records
     except Exception as e:
-        log.error(f"  -> Parse failed: {e}")
-        if not auto_mode:
-            input("     Press Enter to continue...")
-        return page
+        log.error(f"  -> Failed to fetch sessions: {e}")
+        return []
 
-    # Read summary counts from the results
-    summary = page.evaluate("""() => {
-        const corrections = document.getElementById('da-apply-corrections-btn');
-        const addNew = document.getElementById('da-add-new-btn');
-        return {
-            correctionsVisible: corrections && !corrections.classList.contains('hidden'),
-            correctionsText: corrections ? corrections.textContent.trim() : '',
-            addNewVisible: addNew && !addNew.classList.contains('hidden'),
-            addNewText: addNew ? addNew.textContent.trim() : ''
-        };
-    }""")
-    log.info(f"  -> Results: corrections={summary['correctionsText']}, new={summary['addNewText']}")
 
-    # Apply corrections if available
-    if summary['correctionsVisible']:
+def reconcile_da_entries(da_entries, sessions):
+    """Match DA entries against existing sessions.
+
+    Replicates the JS reconcileDAData() logic:
+    - Exact amount match (2 decimal places)
+    - Same type (project/task)
+    - Date within ±3 days
+    - Pick closest timestamp match
+    - Matched if timestamps within 5 minutes, otherwise correction needed
+    """
+    matched = []
+    corrections = []
+    unmatched = []
+    used_session_ids = set()
+
+    for da in da_entries:
+        da_date = datetime.fromisoformat(da['submittedAt'])
+
+        best_match = None
+        best_time_diff = float('inf')
+
+        for session in sessions:
+            sid = session.get('id', '')
+            if sid in used_session_ids:
+                continue
+
+            # Amount must match exactly (2 decimal places)
+            try:
+                s_earnings = round(float(session.get('earnings', 0)), 2)
+            except (ValueError, TypeError):
+                continue
+            if s_earnings != da['amount']:
+                continue
+
+            # Type must match
+            if session.get('type') != da['type']:
+                continue
+
+            # Date must be within 3 days
+            session_submitted = session.get('submittedAt')
+            session_date_str = session.get('date', '')
+            if session_submitted:
+                try:
+                    session_dt = datetime.fromisoformat(session_submitted)
+                except ValueError:
+                    session_dt = datetime.fromisoformat(session_date_str) if session_date_str else None
+            elif session_date_str:
+                try:
+                    session_dt = datetime.fromisoformat(session_date_str)
+                except ValueError:
+                    continue
+            else:
+                continue
+
+            if session_dt is None:
+                continue
+
+            # Ensure both are offset-aware or offset-naive for comparison
+            if da_date.tzinfo and not session_dt.tzinfo:
+                session_dt = session_dt.replace(tzinfo=timezone.utc)
+            elif not da_date.tzinfo and session_dt.tzinfo:
+                da_date = da_date.replace(tzinfo=timezone.utc)
+
+            time_diff = abs((da_date - session_dt).total_seconds())
+            day_diff = time_diff / (60 * 60 * 24)
+
+            if day_diff <= 3 and time_diff < best_time_diff:
+                best_match = session
+                best_time_diff = time_diff
+
+        if best_match:
+            used_session_ids.add(best_match['id'])
+            old_submitted = best_match.get('submittedAt')
+            if old_submitted:
+                try:
+                    old_dt = datetime.fromisoformat(old_submitted)
+                    if da_date.tzinfo and not old_dt.tzinfo:
+                        old_dt = old_dt.replace(tzinfo=timezone.utc)
+                    time_diff_min = abs((da_date - old_dt).total_seconds()) / 60
+                except ValueError:
+                    time_diff_min = float('inf')
+            else:
+                time_diff_min = float('inf')
+
+            if time_diff_min <= 5:
+                matched.append({'da': da, 'session': best_match})
+            else:
+                corrections.append({
+                    'da': da,
+                    'session': best_match,
+                    'oldSubmittedAt': old_submitted,
+                    'newSubmittedAt': da['submittedAt']
+                })
+        else:
+            unmatched.append({'da': da})
+
+    log.info(f"  -> Reconciliation: {len(matched)} matched, {len(corrections)} corrections, {len(unmatched)} new")
+    return {
+        'matched': matched,
+        'corrections': corrections,
+        'unmatched': unmatched,
+        'total': len(da_entries)
+    }
+
+
+def import_to_sheets(corrections, unmatched):
+    """Push corrections and new entries to Google Sheets via Apps Script.
+
+    - Corrections: update submittedAt (and optionally duration/notes)
+    - New entries: add as new WorkSession records
+    """
+    if not APPS_SCRIPT_URL:
+        log.error("APPS_SCRIPT_URL not set — cannot import to Sheets.")
+        return
+
+    if not corrections and not unmatched:
+        log.info("[6/6] Nothing to import — all entries already matched.")
+        return
+
+    log.info(f"[6/6] Importing to Sheets: {len(corrections)} corrections, {len(unmatched)} new entries...")
+
+    # Apply corrections
+    for c in corrections:
+        session = c['session']
+        da = c['da']
+        updates = {'submittedAt': c['newSubmittedAt']}
+
+        # Also update duration if DA has it and session doesn't
+        s_duration = float(session.get('duration', 0) or 0)
+        if da['duration'] > 0 and s_duration == 0:
+            updates['duration'] = da['duration']
+            updates['hourlyRate'] = da['amount'] / da['duration']
+
+        # Add project name to notes if session has no notes
+        if da['projectName'] and not session.get('notes'):
+            updates['notes'] = da['projectName']
+
         try:
-            corrections_btn = page.locator('#da-apply-corrections-btn').first
-            corrections_btn.click()
-            log.info("  -> Applied corrections.")
-            page.wait_for_timeout(2000)
+            payload = json.dumps({
+                'action': 'update',
+                'tab': 'WorkSessions',
+                'id': session['id'],
+                'updates': updates
+            })
+            resp = requests.post(
+                APPS_SCRIPT_URL,
+                headers={'Content-Type': 'text/plain'},
+                data=payload,
+                timeout=30,
+                allow_redirects=True
+            )
+            result = resp.json()
+            if result.get('error'):
+                log.error(f"  -> Correction failed for {session['id']}: {result['error']}")
+            else:
+                log.info(f"  -> Corrected {session['id']}: submittedAt → {c['newSubmittedAt'][:19]}")
         except Exception as e:
-            log.error(f"  -> Failed to apply corrections: {e}")
+            log.error(f"  -> Correction request failed for {session['id']}: {e}")
 
-    # Add new entries if available (checkboxes are pre-checked by default)
-    if summary['addNewVisible']:
+    # Add new entries
+    for u in unmatched:
+        da = u['da']
+        record_id = f"ws_{int(time.time() * 1000)}_{os.urandom(4).hex()}"
+        record = {
+            'id': record_id,
+            'date': da['submittedAt'][:10],
+            'duration': da['duration'],
+            'type': da['type'],
+            'projectId': '',
+            'notes': da['projectName'],
+            'hourlyRate': da['amount'] / da['duration'] if da['duration'] > 0 else 0,
+            'earnings': da['amount'],
+            'submittedAt': da['submittedAt']
+        }
+
         try:
-            add_btn = page.locator('#da-add-new-btn').first
-            add_btn.click()
-            log.info("  -> Added new entries.")
-            page.wait_for_timeout(2000)
+            payload = json.dumps({
+                'action': 'add',
+                'tab': 'WorkSessions',
+                'record': record
+            })
+            resp = requests.post(
+                APPS_SCRIPT_URL,
+                headers={'Content-Type': 'text/plain'},
+                data=payload,
+                timeout=30,
+                allow_redirects=True
+            )
+            result = resp.json()
+            if result.get('error'):
+                log.error(f"  -> Add failed for {record_id}: {result['error']}")
+            else:
+                log.info(f"  -> Added {record_id}: ${da['amount']:.2f} {da['type']} on {da['submittedAt'][:10]}")
         except Exception as e:
-            log.error(f"  -> Failed to add new entries: {e}")
+            log.error(f"  -> Add request failed for {record_id}: {e}")
 
-    log.info("  -> Import complete!")
-
-    if not auto_mode:
-        input("\nPress Enter to close the browser...")
-
-    return page
+        # Small delay to avoid generating duplicate IDs
+        time.sleep(0.05)
 
 
 def main():
@@ -577,12 +793,17 @@ def main():
             if args.html_only:
                 log.info(f"\nDone! HTML saved to: {saved_path}")
             else:
-                # Step 6: Import into tracker
-                import_into_tracker(context, combined_html, auto_mode=args.auto)
+                # Step 6: Parse, reconcile, and import via API
+                da_entries = parse_da_html(combined_html)
+                sessions = fetch_existing_sessions()
+                result = reconcile_da_entries(da_entries, sessions)
+                import_to_sheets(result['corrections'], result['unmatched'])
 
                 log.info("")
                 log.info("=" * 55)
-                log.info(" DONE! Data reconciled in tracker.")
+                log.info(" DONE! Data reconciled via API.")
+                log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
+                         f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
                 log.info(f" HTML backup: {saved_path}")
                 log.info("=" * 55)
 
