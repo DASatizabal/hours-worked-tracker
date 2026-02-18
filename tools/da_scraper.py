@@ -214,7 +214,7 @@ def fetch_verification_code_from_gmail(max_retries=5, retry_delay=5):
 def login_to_da(page):
     """Navigate to DA and log in with email/password."""
     log.info("[1/6] Navigating to DA payments page...")
-    page.goto(DA_PAYMENTS_URL, wait_until="networkidle", timeout=30000)
+    page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
 
     # If redirected to login, fill credentials
     if "login" in page.url.lower() or "sign" in page.url.lower():
@@ -269,27 +269,30 @@ def login_to_da(page):
                 verify_btn.click()
 
                 # Wait for redirect to workers page
-                page.wait_for_url("**/workers/**", timeout=30000)
+                page.wait_for_url("**/workers/**", timeout=60000)
                 log.info("  -> Login successful (with verification code)!")
 
             except PWTimeout:
-                # No verification input found — maybe the page is still loading
-                # or it's a different prompt. Try waiting for workers URL directly.
-                log.info("  -> No verification input found, waiting for redirect...")
-                try:
-                    page.wait_for_url("**/workers/**", timeout=15000)
-                    log.info("  -> Login successful!")
-                except PWTimeout:
-                    raise Exception(
-                        f"Login failed — stuck at {page.url}. "
-                        "Not a verification prompt and not redirecting to /workers/."
-                    )
+                # No verification input found, or redirect took too long.
+                # Check if we're already on /workers/
+                if "/workers/" in page.url:
+                    log.info("  -> Already on workers page, continuing.")
+                else:
+                    log.info("  -> No verification input found, waiting for redirect...")
+                    try:
+                        page.wait_for_url("**/workers/**", timeout=15000)
+                        log.info("  -> Login successful!")
+                    except PWTimeout:
+                        raise Exception(
+                            f"Login failed — stuck at {page.url}. "
+                            "Not a verification prompt and not redirecting to /workers/."
+                        )
     else:
         log.info("[2/6] Already logged in, skipping.")
 
     # Make sure we're on the payments page
     if "/workers/payments" not in page.url:
-        page.goto(DA_PAYMENTS_URL, wait_until="networkidle", timeout=30000)
+        page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
 
     page.wait_for_timeout(2000)
 
