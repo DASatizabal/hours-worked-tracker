@@ -15,6 +15,9 @@ Usage:
     python da_scraper.py --show-paid  # Also include already-paid entries
     python da_scraper.py --force      # Run regardless of payday setting
     python da_scraper.py --auto       # Unattended mode (headless, no prompts)
+    python da_scraper.py --get-paid        # Request payout (payday check applies)
+    python da_scraper.py --get-paid --force # Request payout regardless of day
+    python da_scraper.py --get-paid --auto  # Headless payout for Task Scheduler
 
 Credentials:
     Create a .env file in the tools/ directory:
@@ -24,14 +27,20 @@ Credentials:
 
 Scheduling (Windows Task Scheduler):
     The script checks payday from Google Sheets and exits early if
-    today isn't the configured payday. Schedule it to run daily:
+    today isn't the configured payday. Schedule two daily tasks:
 
-    1. Open Task Scheduler > Create Basic Task
-    2. Trigger: Daily, pick your morning time
-    3. Action: Start a Program
+    1. Scraper task (morning):
+       Open Task Scheduler > Create Basic Task
+       Trigger: Daily, pick your morning time
+       Action: Start a Program
        Program: python
        Arguments: "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools\\da_scraper.py" --auto
        Start in: "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools"
+
+    2. Get-paid task (noon):
+       Same setup but with Arguments:
+       "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools\\da_scraper.py" --get-paid --auto
+       Trigger at noon so the scraper has already run and earnings are recorded.
 """
 
 import os
@@ -295,6 +304,42 @@ def login_to_da(page):
         page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
 
     page.wait_for_timeout(2000)
+
+
+def claim_payment(page):
+    """Click the 'Get paid' button on the payments page to request payout."""
+    log.info("[3/3] Looking for 'Get paid' button...")
+
+    try:
+        get_paid_btn = page.locator('button.btn.btn-primary', has_text='Get paid').first
+        get_paid_btn.wait_for(state="visible", timeout=10000)
+
+        btn_text = get_paid_btn.text_content().strip()
+        log.info(f"  -> Found button: \"{btn_text}\"")
+
+        get_paid_btn.click()
+        log.info("  -> Clicked 'Get paid' button.")
+
+        # Wait for the transfer-in-progress confirmation to appear
+        try:
+            page.locator('#transferInProgress').wait_for(state="visible", timeout=15000)
+            log.info("  -> Transfer initiated! Confirmation element visible.")
+        except PWTimeout:
+            log.warning("  -> Transfer confirmation (#transferInProgress) did not appear within 15s.")
+
+        # Take a screenshot for the record
+        screenshot_path = str(SCRIPT_DIR / "da_payment_claimed.png")
+        page.screenshot(path=screenshot_path)
+        log.info(f"  -> Screenshot saved to da_payment_claimed.png")
+        log.info("")
+        log.info("=" * 55)
+        log.info(f" PAYMENT CLAIMED: {btn_text}")
+        log.info("=" * 55)
+
+    except PWTimeout:
+        log.info("  -> No 'Get paid' button found (may not have a balance to claim).")
+        page.screenshot(path=str(SCRIPT_DIR / "da_payment_claimed.png"))
+        log.info("  -> Screenshot saved to da_payment_claimed.png")
 
 
 def ensure_view_all_tab(page):
@@ -748,6 +793,8 @@ def main():
                         help="Run regardless of payday setting")
     parser.add_argument("--auto", action="store_true",
                         help="Unattended mode: headless, no prompts, skips non-payday")
+    parser.add_argument("--get-paid", action="store_true",
+                        help="Click the 'Get paid' button to request payout")
     args = parser.parse_args()
 
     # --auto implies --headless
@@ -761,7 +808,10 @@ def main():
             log.info(f"Today is {DAY_NAMES[(datetime.now().weekday() + 1) % 7]}, "
                      f"payday is {DAY_NAMES[payday]}. Skipping. (Use --force to override)")
             sys.exit(0)
-        log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting scrape...")
+        if args.get_paid:
+            log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting payment claim...")
+        else:
+            log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting scrape...")
 
     if not DA_EMAIL or not DA_PASSWORD:
         log.error("Missing credentials! Create a .env file with DA_EMAIL and DA_PASSWORD.")
@@ -780,32 +830,38 @@ def main():
         page = context.new_page()
 
         try:
-            # Steps 1-2: Login
-            login_to_da(page)
-
-            # Steps 3-4: Select tab, expand all rows, paginate
-            html_parts = scrape_all_pages(page, show_paid=args.show_paid)
-            combined_html = combine_html_pages(html_parts)
-
-            # Step 5: Save backup
-            saved_path = save_html_to_file(combined_html)
-
-            if args.html_only:
-                log.info(f"\nDone! HTML saved to: {saved_path}")
+            if args.get_paid:
+                # --get-paid mode: login and claim payment, skip scraping
+                login_to_da(page)
+                claim_payment(page)
             else:
-                # Step 6: Parse, reconcile, and import via API
-                da_entries = parse_da_html(combined_html)
-                sessions = fetch_existing_sessions()
-                result = reconcile_da_entries(da_entries, sessions)
-                import_to_sheets(result['corrections'], result['unmatched'])
+                # Normal mode: scrape + import
+                # Steps 1-2: Login
+                login_to_da(page)
 
-                log.info("")
-                log.info("=" * 55)
-                log.info(" DONE! Data reconciled via API.")
-                log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
-                         f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
-                log.info(f" HTML backup: {saved_path}")
-                log.info("=" * 55)
+                # Steps 3-4: Select tab, expand all rows, paginate
+                html_parts = scrape_all_pages(page, show_paid=args.show_paid)
+                combined_html = combine_html_pages(html_parts)
+
+                # Step 5: Save backup
+                saved_path = save_html_to_file(combined_html)
+
+                if args.html_only:
+                    log.info(f"\nDone! HTML saved to: {saved_path}")
+                else:
+                    # Step 6: Parse, reconcile, and import via API
+                    da_entries = parse_da_html(combined_html)
+                    sessions = fetch_existing_sessions()
+                    result = reconcile_da_entries(da_entries, sessions)
+                    import_to_sheets(result['corrections'], result['unmatched'])
+
+                    log.info("")
+                    log.info("=" * 55)
+                    log.info(" DONE! Data reconciled via API.")
+                    log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
+                             f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
+                    log.info(f" HTML backup: {saved_path}")
+                    log.info("=" * 55)
 
         except Exception as e:
             log.error(f"ERROR: {e}")
