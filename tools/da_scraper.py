@@ -329,22 +329,23 @@ def expand_all_rows(page):
     """Click all collapsed expand arrows to reveal nested rows."""
     log.info("[4/6] Expanding all nested rows...")
     total_expanded = 0
-    max_rounds = 50
+    max_rounds = 20
 
     for round_num in range(max_rounds):
         result = page.evaluate("""() => {
             const svgs = document.querySelectorAll('svg.tw-rounded-full');
             let clicked = 0;
-            let total = 0;
             for (const svg of svgs) {
-                total++;
+                // Skip arrows we've already expanded
+                if (svg.dataset.expanded === '1') continue;
                 const style = svg.getAttribute('style') || '';
                 if (style.includes('rotate(-0.25turn)')) {
+                    svg.dataset.expanded = '1';
                     svg.parentElement.click();
                     clicked++;
                 }
             }
-            return { clicked, total };
+            return { clicked };
         }""")
 
         clicked = result["clicked"]
