@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.8.9
+ * VERSION: 1.9.0
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -611,6 +611,69 @@ function addMissingIds() {
     }
   }
   Logger.log('Added IDs to ' + count + ' rows');
+}
+
+// Find and highlight duplicate WorkSessions (same SubmittedAt + Earnings).
+// Keeps the earliest row (lowest row number) and highlights later duplicates in red.
+// Run this manually from the Apps Script editor, then review the red rows and delete them.
+function flagDuplicateWorkSessions() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('WorkSessions');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var subCol = headers.indexOf('SubmittedAt');
+  var earnCol = headers.indexOf('Earnings');
+  var idCol = headers.indexOf('ID');
+
+  if (subCol === -1 || earnCol === -1) {
+    Logger.log('ERROR: Missing SubmittedAt or Earnings column');
+    return;
+  }
+
+  // Build map of (submittedAt + earnings) -> first row index
+  var seen = {};
+  var dupRows = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var key = String(data[i][subCol]) + '|' + String(parseFloat(data[i][earnCol]) || 0);
+    if (seen[key] !== undefined) {
+      dupRows.push(i + 1); // 1-indexed sheet row
+      Logger.log('DUPLICATE row ' + (i + 1) + ': ' +
+        'Earnings=' + data[i][earnCol] +
+        ', SubmittedAt=' + data[i][subCol] +
+        ', ID=' + data[i][idCol] +
+        ' (duplicate of row ' + (seen[key] + 1) + ')');
+    } else {
+      seen[key] = i;
+    }
+  }
+
+  // Highlight duplicates in red
+  for (var j = 0; j < dupRows.length; j++) {
+    sheet.getRange(dupRows[j], 1, 1, headers.length).setBackground('#ffcccc');
+  }
+
+  Logger.log('Found ' + dupRows.length + ' duplicate(s) out of ' + (data.length - 1) + ' rows. Highlighted in red.');
+}
+
+// Remove all red-highlighted duplicate rows (run after reviewing flagDuplicateWorkSessions results).
+// Deletes rows from bottom to top to preserve row indices.
+function deleteFlaggedDuplicates() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('WorkSessions');
+  var data = sheet.getDataRange().getValues();
+  var lastCol = data[0].length;
+  var deleted = 0;
+
+  for (var i = data.length - 1; i >= 1; i--) {
+    var bg = sheet.getRange(i + 1, 1).getBackground();
+    if (bg === '#ffcccc') {
+      sheet.deleteRow(i + 1);
+      deleted++;
+    }
+  }
+
+  Logger.log('Deleted ' + deleted + ' flagged duplicate row(s).');
 }
 
 // Clear all EmailPayouts data (keeps header row) - run before rescanning emails
