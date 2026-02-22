@@ -14,7 +14,7 @@ Usage:
     python da_scraper.py --html-only  # Just save HTML to file, skip tracker import
     python da_scraper.py --show-paid  # Also include already-paid entries
     python da_scraper.py --force      # Run regardless of payday setting
-    python da_scraper.py --auto       # Unattended mode (headless, no prompts)
+    python da_scraper.py --auto       # Unattended mode (headless, no prompts, daily scrape)
     python da_scraper.py --get-paid        # Request payout (payday check applies)
     python da_scraper.py --get-paid --force # Request payout regardless of day
     python da_scraper.py --get-paid --auto  # Headless payout for Task Scheduler
@@ -29,18 +29,17 @@ Scheduling (Windows Task Scheduler):
     The script checks payday from Google Sheets and exits early if
     today isn't the configured payday. Schedule two daily tasks:
 
-    1. Scraper task (morning):
+    1. Scraper task (daily, morning):
        Open Task Scheduler > Create Basic Task
-       Trigger: Daily, pick your morning time
+       Trigger: Daily, pick your morning time (e.g. 7 AM)
        Action: Start a Program
-       Program: python
-       Arguments: "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools\\da_scraper.py" --auto
-       Start in: "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools"
+       Program: run_scraper.bat  (runs --auto, scrapes + imports every day)
 
-    2. Get-paid task (noon):
-       Same setup but with Arguments:
-       "L:\\David's Folder\\Claude Projects\\hours-worked-tracker\\tools\\da_scraper.py" --get-paid --auto
-       Trigger at noon so the scraper has already run and earnings are recorded.
+    2. Get-paid task (weekly, on payday):
+       Same setup but with run_get_paid.bat
+       Trigger: Weekly on your payday (e.g. Thursday at noon)
+       Runs --get-paid --auto. The payday check is a safety net in case
+       the schedule fires on the wrong day.
 """
 
 import os
@@ -564,10 +563,15 @@ def parse_da_html(html):
 
 
 def fetch_existing_sessions():
-    """Fetch existing work sessions from Google Sheets via Apps Script."""
+    """Fetch existing work sessions from Google Sheets via Apps Script.
+
+    Returns a list of session records on success.
+    Returns None on failure (timeout, network error, etc.) so the caller
+    can distinguish between 'no records exist' and 'fetch failed'.
+    """
     if not APPS_SCRIPT_URL:
         log.error("APPS_SCRIPT_URL not set in .env — cannot fetch sessions.")
-        return []
+        return None
 
     try:
         url = APPS_SCRIPT_URL + '?tab=WorkSessions'
@@ -578,7 +582,7 @@ def fetch_existing_sessions():
         return records
     except Exception as e:
         log.error(f"  -> Failed to fetch sessions: {e}")
-        return []
+        return None
 
 
 def reconcile_da_entries(da_entries, sessions):
@@ -792,7 +796,7 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="Run regardless of payday setting")
     parser.add_argument("--auto", action="store_true",
-                        help="Unattended mode: headless, no prompts, skips non-payday")
+                        help="Unattended mode: headless, no prompts")
     parser.add_argument("--get-paid", action="store_true",
                         help="Click the 'Get paid' button to request payout")
     args = parser.parse_args()
@@ -801,17 +805,18 @@ def main():
     if args.auto:
         args.headless = True
 
-    # Check payday unless --force is set
-    if not args.force:
+    # Payday check only applies to --get-paid (scraping should run daily)
+    if args.get_paid and not args.force:
         payday = get_payday_from_sheets()
         if not is_today_payday(payday):
             log.info(f"Today is {DAY_NAMES[(datetime.now().weekday() + 1) % 7]}, "
-                     f"payday is {DAY_NAMES[payday]}. Skipping. (Use --force to override)")
+                     f"payday is {DAY_NAMES[payday]}. Skipping payout. (Use --force to override)")
             sys.exit(0)
-        if args.get_paid:
-            log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting payment claim...")
-        else:
-            log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting scrape...")
+        log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting payment claim...")
+    elif args.get_paid:
+        log.info("Starting payment claim (--force, skipping payday check)...")
+    else:
+        log.info("Starting daily scrape...")
 
     if not DA_EMAIL or not DA_PASSWORD:
         log.error("Missing credentials! Create a .env file with DA_EMAIL and DA_PASSWORD.")
@@ -851,17 +856,34 @@ def main():
                 else:
                     # Step 6: Parse, reconcile, and import via API
                     da_entries = parse_da_html(combined_html)
-                    sessions = fetch_existing_sessions()
-                    result = reconcile_da_entries(da_entries, sessions)
-                    import_to_sheets(result['corrections'], result['unmatched'])
 
-                    log.info("")
-                    log.info("=" * 55)
-                    log.info(" DONE! Data reconciled via API.")
-                    log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
-                             f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
-                    log.info(f" HTML backup: {saved_path}")
-                    log.info("=" * 55)
+                    # Deduplicate parsed entries (same submittedAtMs = same work item)
+                    seen_keys = set()
+                    unique_entries = []
+                    for entry in da_entries:
+                        key = (entry['submittedAtMs'], entry['amount'], entry['type'])
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            unique_entries.append(entry)
+                    if len(unique_entries) < len(da_entries):
+                        log.info(f"  -> Deduplicated: {len(da_entries)} -> {len(unique_entries)} entries")
+                    da_entries = unique_entries
+
+                    sessions = fetch_existing_sessions()
+                    if sessions is None:
+                        log.error("Cannot reconcile without existing sessions. "
+                                  "Aborting import to prevent duplicates. HTML backup saved.")
+                    else:
+                        result = reconcile_da_entries(da_entries, sessions)
+                        import_to_sheets(result['corrections'], result['unmatched'])
+
+                        log.info("")
+                        log.info("=" * 55)
+                        log.info(" DONE! Data reconciled via API.")
+                        log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
+                                 f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
+                        log.info(f" HTML backup: {saved_path}")
+                        log.info("=" * 55)
 
         except Exception as e:
             log.error(f"ERROR: {e}")

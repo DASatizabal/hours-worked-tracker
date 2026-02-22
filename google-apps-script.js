@@ -110,6 +110,23 @@ function addRecord(tab, record) {
   if (!sheet) return createResponse({ error: 'Tab not found: ' + tab }, 404);
 
   const headers = TABS[tab];
+
+  // Dedup guard for WorkSessions: reject if a row with the same SubmittedAt + Earnings already exists
+  if (tab === 'WorkSessions' && record.submittedAt) {
+    var subCol = headers.indexOf('SubmittedAt');
+    var earnCol = headers.indexOf('Earnings');
+    if (subCol !== -1 && earnCol !== -1) {
+      var data = sheet.getDataRange().getValues();
+      var newEarnings = parseFloat(record.earnings) || 0;
+      for (var i = 1; i < data.length; i++) {
+        if (String(data[i][subCol]) === String(record.submittedAt) &&
+            (parseFloat(data[i][earnCol]) || 0) === newEarnings) {
+          return createResponse({ success: true, duplicate: true, record: record });
+        }
+      }
+    }
+  }
+
   const row = headers.map(h => {
     const key = camelCase(h);
     return record[key] !== undefined ? record[key] : '';
