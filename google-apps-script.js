@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.9.0
+ * VERSION: 1.9.1
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -29,6 +29,14 @@ function doGet(e) {
     // Email scan action
     if (action === 'scanEmails') {
       return createResponse(scanEmails());
+    }
+
+    // Dedup: flag or delete duplicate WorkSessions
+    if (action === 'flagDuplicates') {
+      return createResponse(flagDuplicateWorkSessions());
+    }
+    if (action === 'deleteFlaggedDuplicates') {
+      return createResponse(deleteFlaggedDuplicates());
     }
 
     // Lightweight scan status check for client polling
@@ -624,36 +632,42 @@ function flagDuplicateWorkSessions() {
   var subCol = headers.indexOf('SubmittedAt');
   var earnCol = headers.indexOf('Earnings');
   var idCol = headers.indexOf('ID');
+  var noteCol = headers.indexOf('Notes');
+  var dateCol = headers.indexOf('Date');
+  var durCol = headers.indexOf('Duration');
 
   if (subCol === -1 || earnCol === -1) {
-    Logger.log('ERROR: Missing SubmittedAt or Earnings column');
-    return;
+    return { error: 'Missing SubmittedAt or Earnings column' };
   }
 
   // Build map of (submittedAt + earnings) -> first row index
   var seen = {};
-  var dupRows = [];
+  var duplicates = [];
 
   for (var i = 1; i < data.length; i++) {
     var key = String(data[i][subCol]) + '|' + String(parseFloat(data[i][earnCol]) || 0);
     if (seen[key] !== undefined) {
-      dupRows.push(i + 1); // 1-indexed sheet row
-      Logger.log('DUPLICATE row ' + (i + 1) + ': ' +
-        'Earnings=' + data[i][earnCol] +
-        ', SubmittedAt=' + data[i][subCol] +
-        ', ID=' + data[i][idCol] +
-        ' (duplicate of row ' + (seen[key] + 1) + ')');
+      duplicates.push({
+        row: i + 1,
+        duplicateOf: seen[key].row,
+        earnings: data[i][earnCol],
+        date: data[i][dateCol],
+        duration: data[i][durCol],
+        submittedAt: String(data[i][subCol]),
+        notes: data[i][noteCol],
+        id: data[i][idCol],
+        keptId: seen[key].id
+      });
+      // Highlight in red
+      sheet.getRange(i + 1, 1, 1, headers.length).setBackground('#ffcccc');
     } else {
-      seen[key] = i;
+      seen[key] = { row: i + 1, id: data[i][idCol] };
     }
   }
 
-  // Highlight duplicates in red
-  for (var j = 0; j < dupRows.length; j++) {
-    sheet.getRange(dupRows[j], 1, 1, headers.length).setBackground('#ffcccc');
-  }
-
-  Logger.log('Found ' + dupRows.length + ' duplicate(s) out of ' + (data.length - 1) + ' rows. Highlighted in red.');
+  var msg = 'Found ' + duplicates.length + ' duplicate(s) out of ' + (data.length - 1) + ' rows. Highlighted in red.';
+  Logger.log(msg);
+  return { message: msg, totalRows: data.length - 1, duplicates: duplicates };
 }
 
 // Remove all red-highlighted duplicate rows (run after reviewing flagDuplicateWorkSessions results).
@@ -662,7 +676,6 @@ function deleteFlaggedDuplicates() {
   var ss = SpreadsheetApp.openById(SHEET_ID);
   var sheet = ss.getSheetByName('WorkSessions');
   var data = sheet.getDataRange().getValues();
-  var lastCol = data[0].length;
   var deleted = 0;
 
   for (var i = data.length - 1; i >= 1; i--) {
@@ -673,7 +686,9 @@ function deleteFlaggedDuplicates() {
     }
   }
 
-  Logger.log('Deleted ' + deleted + ' flagged duplicate row(s).');
+  var msg = 'Deleted ' + deleted + ' flagged duplicate row(s).';
+  Logger.log(msg);
+  return { message: msg, deleted: deleted };
 }
 
 // Clear all EmailPayouts data (keeps header row) - run before rescanning emails
