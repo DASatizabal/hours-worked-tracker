@@ -716,11 +716,11 @@ def import_to_sheets(corrections, unmatched):
         s_duration = float(session.get('duration', 0) or 0)
         if da['duration'] > 0 and s_duration == 0:
             updates['duration'] = da['duration']
-            updates['hourlyRate'] = da['amount'] / da['duration']
+            updates['hourlyRate'] = round(da['amount'] / da['duration'])
 
-        # Add project name to notes if session has no notes
-        if da['projectName'] and not session.get('notes'):
-            updates['notes'] = da['projectName']
+        # Add project name to projectId if session has none
+        if da['projectName'] and not session.get('projectId'):
+            updates['projectId'] = da['projectName']
 
         try:
             payload = json.dumps({
@@ -753,9 +753,9 @@ def import_to_sheets(corrections, unmatched):
             'date': da['submittedAt'][:10],
             'duration': da['duration'],
             'type': da['type'],
-            'projectId': '',
-            'notes': da['projectName'],
-            'hourlyRate': da['amount'] / da['duration'] if da['duration'] > 0 else 0,
+            'projectId': da['projectName'],
+            'notes': '',
+            'hourlyRate': round(da['amount'] / da['duration']) if da['duration'] > 0 else 0,
             'earnings': da['amount'],
             'submittedAt': da['submittedAt']
         }

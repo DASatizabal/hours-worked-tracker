@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.9.1
+ * VERSION: 1.9.2
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -119,15 +119,19 @@ function addRecord(tab, record) {
 
   const headers = TABS[tab];
 
-  // Dedup guard for WorkSessions: reject if a row with the same SubmittedAt + Earnings already exists
-  if (tab === 'WorkSessions' && record.submittedAt) {
-    var subCol = headers.indexOf('SubmittedAt');
+  // Dedup guard for WorkSessions: reject if a row with the same Date + Earnings already exists
+  if (tab === 'WorkSessions' && record.date) {
+    var dateCol = headers.indexOf('Date');
     var earnCol = headers.indexOf('Earnings');
-    if (subCol !== -1 && earnCol !== -1) {
+    if (dateCol !== -1 && earnCol !== -1) {
       var data = sheet.getDataRange().getValues();
       var newEarnings = parseFloat(record.earnings) || 0;
+      var newDate = String(record.date).slice(0, 10);
       for (var i = 1; i < data.length; i++) {
-        if (String(data[i][subCol]) === String(record.submittedAt) &&
+        var rowDate = data[i][dateCol] instanceof Date
+          ? data[i][dateCol].toISOString().split('T')[0]
+          : String(data[i][dateCol]).slice(0, 10);
+        if (rowDate === newDate &&
             (parseFloat(data[i][earnCol]) || 0) === newEarnings) {
           return createResponse({ success: true, duplicate: true, record: record });
         }
@@ -636,16 +640,19 @@ function flagDuplicateWorkSessions() {
   var dateCol = headers.indexOf('Date');
   var durCol = headers.indexOf('Duration');
 
-  if (subCol === -1 || earnCol === -1) {
-    return { error: 'Missing SubmittedAt or Earnings column' };
+  if (dateCol === -1 || earnCol === -1) {
+    return { error: 'Missing Date or Earnings column' };
   }
 
-  // Build map of (submittedAt + earnings) -> first row index
+  // Build map of (date + earnings) -> first row index
   var seen = {};
   var duplicates = [];
 
   for (var i = 1; i < data.length; i++) {
-    var key = String(data[i][subCol]) + '|' + String(parseFloat(data[i][earnCol]) || 0);
+    var rowDate = data[i][dateCol] instanceof Date
+      ? data[i][dateCol].toISOString().split('T')[0]
+      : String(data[i][dateCol]).slice(0, 10);
+    var key = rowDate + '|' + String(parseFloat(data[i][earnCol]) || 0);
     if (seen[key] !== undefined) {
       duplicates.push({
         row: i + 1,

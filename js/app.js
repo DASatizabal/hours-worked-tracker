@@ -806,14 +806,14 @@ const App = {
         if (type === 'project') {
             const hours = parseInt(document.getElementById('session-hours').value) || 0;
             const minutes = parseInt(document.getElementById('session-minutes').value) || 0;
-            duration = hours + minutes / 60;
+            duration = Math.round((hours + minutes / 60) * 100) / 100;
 
             if (duration <= 0) {
                 this.showToast('Please enter time worked', 'error');
                 return;
             }
 
-            hourlyRate = earnings / duration;
+            hourlyRate = Math.round(earnings / duration);
         }
 
         const session = {
@@ -1800,7 +1800,7 @@ const App = {
                 // Also update duration if DA has it and session doesn't
                 if (c.da.duration > 0 && (!c.session.duration || parseFloat(c.session.duration) === 0)) {
                     updates.duration = c.da.duration;
-                    updates.hourlyRate = c.da.amount / c.da.duration;
+                    updates.hourlyRate = Math.round(c.da.amount / c.da.duration);
                 }
 
                 // Add project name to notes if session has no notes
@@ -1849,7 +1849,7 @@ const App = {
                     type: da.type,
                     projectId: da.projectName || '',
                     notes: '',
-                    hourlyRate: da.duration > 0 ? da.amount / da.duration : 0,
+                    hourlyRate: da.duration > 0 ? Math.round(da.amount / da.duration) : 0,
                     earnings: da.amount,
                     submittedAt: da.submittedAt
                 };
