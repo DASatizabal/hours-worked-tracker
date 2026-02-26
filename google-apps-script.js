@@ -219,6 +219,7 @@ function scanEmails() {
   try {
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
+    Logger.log('DA threads found: ' + daThreads.length);
     const daPayouts = [];
 
     daThreads.forEach(thread => {
@@ -237,6 +238,7 @@ function scanEmails() {
 
     // Scan PayPal transfer emails (last 30 days) - money moving to bank
     const ppTransferThreads = GmailApp.search('from:service@paypal.com subject:"Your transfer request is processing" newer_than:30d', 0, 50);
+    Logger.log('PayPal threads found: ' + ppTransferThreads.length);
     const ppTransfers = [];
 
     ppTransferThreads.forEach(thread => {
@@ -255,6 +257,7 @@ function scanEmails() {
 
     // Scan Chase deposit emails (last 30 days) - money confirmed in bank
     const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
+    Logger.log('Chase threads found: ' + chaseThreads.length);
     const chaseDeposits = [];
 
     chaseThreads.forEach(thread => {
@@ -323,8 +326,11 @@ function scanEmails() {
     matchChaseDepositsToTransfers(emailSheet, chaseDeposits);
 
   } catch (error) {
+    Logger.log('SCAN ERROR: ' + error.message);
     results.errors.push('Scan error: ' + error.message);
   }
+
+  Logger.log('Final results: ' + JSON.stringify(results));
 
   // Store scan metadata for lightweight client polling
   var props = PropertiesService.getScriptProperties();
