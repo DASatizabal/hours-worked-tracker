@@ -225,17 +225,9 @@ const SheetsAPI = {
             if (data.error) throw new Error(data.error);
             this._setSyncStatus('synced');
             const records = data.records || [];
-            const localRecords = this._getFromLocalStorage(tab);
-            // Don't overwrite local data with empty remote data
-            if (records.length > 0 || localRecords.length === 0) {
-                this._sessionCache[tab] = records;
-                this._saveToStorage(tab, records);
-                return records;
-            } else {
-                console.warn(`Remote returned empty for ${tab} but local has ${localRecords.length} records. Keeping local data.`);
-                this._setSyncStatus('offline');
-                return localRecords;
-            }
+            this._sessionCache[tab] = records;
+            this._saveToStorage(tab, records);
+            return records;
         } catch (error) {
             console.error(`Error fetching ${tab} from Apps Script:`, error);
             this._setSyncStatus('offline');
