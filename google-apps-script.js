@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.0
+ * VERSION: 2.0.1
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -31,7 +31,7 @@ function doGet(e) {
 
     // Email scan action
     if (action === 'scanEmails') {
-      return createResponse(scanEmails());
+      return createResponse(scanEmails(e.parameter.userEmail || ''));
     }
 
     // Dedup: flag or delete duplicate WorkSessions
@@ -234,13 +234,12 @@ function upsertSetting(key, value) {
 
 // ============ Email Scanning ============
 
-function scanEmails() {
+function scanEmails(userEmail) {
   const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, sccuDeposits: 0, newRecords: 0, errors: [] };
 
   try {
-    // Tag all records with the deployer's email for multi-user support
-    var deployerEmail = '';
-    try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) { /* fallback */ }
+    // Tag all records with the caller's email for multi-user support
+    var deployerEmail = userEmail || '';
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
