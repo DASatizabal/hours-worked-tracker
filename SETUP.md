@@ -1,5 +1,5 @@
 # Hours Worked Tracker - Setup Guide
-**Current Version: v1.9.3**
+**Current Version: v2.0.0**
 
 ## 1. Firebase Setup (Google Sign-In)
 
@@ -127,3 +127,40 @@ All settings can be changed in the app's **Settings** modal.
 - [ ] Email scan (requires real DA/PayPal emails)
 - [ ] Offline mode works (disconnect network)
 - [ ] Theme toggle works (dark/light)
+
+## 8. Multi-User Setup (Family)
+
+v2.0.0 adds multi-user support. Each family member sees their own data by default, with a toggle for combined family view.
+
+### One-time migration (run by primary user)
+
+1. Open Apps Script editor
+2. Run `migrateAddUserEmail()` — adds `UserEmail` column to data tabs and backfills existing data
+3. Deploy new version of Apps Script
+
+### For additional family members (e.g., Lisa)
+
+1. **Google Sheet**: Share the spreadsheet with their Google account (Editor access)
+2. **Apps Script**: They deploy their own copy:
+   - Go to [script.google.com](https://script.google.com) > New Project
+   - Paste the same `google-apps-script.js` code
+   - Use the **same `SHEET_ID`** as the primary user
+   - Update `appsscript.json` with the oauth scopes (see section 3)
+   - Deploy as Web app (Execute as: their account, Access: Anyone)
+   - Copy the deployment URL
+3. **In the app**: Sign in with their Google account > Settings > paste their Apps Script URL
+4. **Email scanning**: If their DA/PayPal emails go to a non-Gmail (e.g., Yahoo), set up forwarding rules in Yahoo to forward DA/PayPal/bank emails to their Gmail
+
+### Python scraper for additional users
+
+1. Create `tools/.env.lisa` (or whatever profile name):
+   ```
+   DA_EMAIL=their_da_email@example.com
+   DA_PASSWORD=their_da_password
+   GMAIL_APP_PASSWORD=their_app_password
+   APPS_SCRIPT_URL=their_apps_script_url
+   DA_USER_EMAIL=their_google_email@gmail.com
+   EMAIL_PROVIDER=yahoo  # or gmail
+   ```
+2. Run with: `python da_scraper.py --auto --profile lisa`
+3. Set up Task Scheduler with `run_scraper_lisa.bat` and `run_get_paid_lisa.bat`

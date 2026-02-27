@@ -119,10 +119,20 @@ const FirebaseAuth = {
         const email = this.getUserEmail();
         return email && AUTH_ROLES.ADMINS.includes(email);
     },
-    isKnownUser() { return this.isPrimaryUser() || this.isAdmin(); },
+    isFamilyMember() {
+        const email = this.getUserEmail();
+        return email && (AUTH_ROLES.FAMILY || []).some(e => e.toLowerCase() === email.toLowerCase());
+    },
+    isKnownUser() { return this.isPrimaryUser() || this.isAdmin() || this.isFamilyMember(); },
 
     getUserStoragePrefix() {
-        if (this.isKnownUser()) return '';
+        // Each family member gets their own localStorage namespace
+        if (this.isFamilyMember()) {
+            const email = this.getUserEmail();
+            const local = email.split('@')[0].toLowerCase();
+            return `u_${local}_`;
+        }
+        // Unknown users get UID-based prefix
         const uid = this.getUserId();
         return uid ? `user_${uid}_` : '';
     },

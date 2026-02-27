@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 1.9.3
+ * VERSION: 2.0.0
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -11,11 +11,14 @@
 const SHEET_ID = '1y1Jjk056nBMP99c_N1YIeUDG3-kpYqmnctydOnZtcbE';
 
 // Tab configurations: column headers for each tab
+// Tabs with user-scoped data have UserEmail as first column
+const USER_SCOPED_TABS = ['WorkSessions', 'Goals', 'GoalAllocations', 'EmailPayouts'];
+
 const TABS = {
-  WorkSessions: ['Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'ID'],
-  Goals: ['Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
-  GoalAllocations: ['GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
-  EmailPayouts: ['Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
+  WorkSessions: ['UserEmail', 'Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'ID'],
+  Goals: ['UserEmail', 'Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
+  GoalAllocations: ['UserEmail', 'GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
+  EmailPayouts: ['UserEmail', 'Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
   CruisePayments: ['Person', 'Amount', 'Date', 'Note', 'Source', 'ID'],
   Settings: ['Key', 'Value']
 };
@@ -65,6 +68,10 @@ function doGet(e) {
     }
 
     const headers = TABS[tab];
+    const userEmail = (e.parameter.userEmail || '').toLowerCase();
+    const view = e.parameter.view || 'personal';
+    const isUserScoped = USER_SCOPED_TABS.indexOf(tab) !== -1;
+
     const records = data.slice(1).map(row => {
       const record = {};
       headers.forEach((h, i) => {
@@ -74,6 +81,15 @@ function doGet(e) {
       });
       return record;
     }).filter(r => r.id || r.key); // Filter empty rows
+
+    // Filter by user in personal view (skip for shared tabs or family view)
+    if (userEmail && view === 'personal' && isUserScoped) {
+      var filtered = records.filter(function(r) {
+        var recEmail = (r.userEmail || '').toLowerCase();
+        return !recEmail || recEmail === userEmail;
+      });
+      return createResponse({ records: filtered });
+    }
 
     return createResponse({ records });
   } catch (error) {
@@ -119,15 +135,20 @@ function addRecord(tab, record) {
 
   const headers = TABS[tab];
 
-  // Dedup guard for WorkSessions: reject if a row with the same Date + Earnings already exists
+  // Dedup guard for WorkSessions: reject if a row with the same UserEmail + Date + Earnings already exists
   if (tab === 'WorkSessions' && record.date) {
+    var userCol = headers.indexOf('UserEmail');
     var dateCol = headers.indexOf('Date');
     var earnCol = headers.indexOf('Earnings');
     if (dateCol !== -1 && earnCol !== -1) {
       var data = sheet.getDataRange().getValues();
       var newEarnings = parseFloat(record.earnings) || 0;
       var newDate = String(record.date).slice(0, 10);
+      var newUserEmail = (record.userEmail || '').toLowerCase();
       for (var i = 1; i < data.length; i++) {
+        // Only check duplicates for the same user
+        var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
+        if (newUserEmail && rowEmail && rowEmail !== newUserEmail) continue;
         var rowDate = data[i][dateCol] instanceof Date
           ? data[i][dateCol].toISOString().split('T')[0]
           : String(data[i][dateCol]).slice(0, 10);
@@ -214,9 +235,12 @@ function upsertSetting(key, value) {
 // ============ Email Scanning ============
 
 function scanEmails() {
-  const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, newRecords: 0, errors: [] };
+  const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, sccuDeposits: 0, newRecords: 0, errors: [] };
 
   try {
+    // Tag all records with the deployer's email for multi-user support
+    var deployerEmail = '';
+    try { deployerEmail = Session.getActiveUser().getEmail() || ''; } catch(e) { /* fallback */ }
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
@@ -274,6 +298,25 @@ function scanEmails() {
       });
     });
 
+    // Scan SCCU deposit emails (last 30 days) - money confirmed in bank (Lisa's bank)
+    const sccuThreads = GmailApp.search('from:payments@sccu.com subject:"We deposited your payment" newer_than:30d', 0, 50);
+    Logger.log('SCCU threads found: ' + sccuThreads.length);
+    const sccuDeposits = [];
+
+    sccuThreads.forEach(thread => {
+      thread.getMessages().forEach(msg => {
+        try {
+          const parsed = parseSCCUDepositEmail(msg);
+          if (parsed) {
+            sccuDeposits.push(parsed);
+            results.sccuDeposits++;
+          }
+        } catch (err) {
+          results.errors.push('SCCU parse error: ' + err.message);
+        }
+      });
+    });
+
     // Save to EmailPayouts tab
     const sheet = SpreadsheetApp.openById(SHEET_ID);
     const emailSheet = sheet.getSheetByName('EmailPayouts');
@@ -289,11 +332,11 @@ function scanEmails() {
     // Get existing email payouts to avoid duplicates
     const existingEmails = getExistingEmailPayouts(emailSheet);
 
-    // Save DA payouts: Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, EstimatedArrival, ID
+    // Save DA payouts: UserEmail, Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, EstimatedArrival, ID
     daPayouts.forEach(dp => {
       if (!existingEmails.has(dp.daPaymentId + '_da')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['dataannotation', dp.daPaymentId, dp.amount, dp.receivedAt, '', '', id]);
+        emailSheet.appendRow([deployerEmail, 'dataannotation', dp.daPaymentId, dp.amount, dp.receivedAt, '', '', id]);
         existingEmails.set(dp.daPaymentId + '_da', id);
         results.newRecords++;
       }
@@ -303,7 +346,7 @@ function scanEmails() {
     ppTransfers.forEach(pt => {
       if (!existingEmails.has(pt.paypalTransactionId + '_pptx')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['paypal_transfer', '', pt.amount, pt.receivedAt, pt.paypalTransactionId, pt.estimatedArrival || '', id]);
+        emailSheet.appendRow([deployerEmail, 'paypal_transfer', '', pt.amount, pt.receivedAt, pt.paypalTransactionId, pt.estimatedArrival || '', id]);
         existingEmails.set(pt.paypalTransactionId + '_pptx', id);
         results.newRecords++;
       }
@@ -313,17 +356,28 @@ function scanEmails() {
     chaseDeposits.forEach(cd => {
       if (!existingEmails.has(cd.chaseMessageId + '_chase')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow(['chase_deposit', cd.chaseMessageId, cd.amount, cd.receivedAt, '', '', id]);
+        emailSheet.appendRow([deployerEmail, 'chase_deposit', cd.chaseMessageId, cd.amount, cd.receivedAt, '', '', id]);
         existingEmails.set(cd.chaseMessageId + '_chase', id);
         results.newRecords++;
       }
     });
 
-    // Match Chase deposits to in-progress PayPal transfers
-    // When a Chase deposit amount matches a transferring PayPal amount,
+    // Save SCCU deposit records
+    sccuDeposits.forEach(sd => {
+      if (!existingEmails.has(sd.confirmationNumber + '_sccu')) {
+        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        emailSheet.appendRow([deployerEmail, 'sccu_deposit', sd.confirmationNumber, sd.amount, sd.receivedAt, '', '', id]);
+        existingEmails.set(sd.confirmationNumber + '_sccu', id);
+        results.newRecords++;
+      }
+    });
+
+    // Match bank deposits to in-progress PayPal transfers
+    // When a deposit amount matches a transferring PayPal amount,
     // update the PayPal transfer's EstimatedArrival to the deposit date
     // so the pipeline immediately moves it to "In Bank"
-    matchChaseDepositsToTransfers(emailSheet, chaseDeposits);
+    var allBankDeposits = chaseDeposits.concat(sccuDeposits);
+    matchBankDepositsToTransfers(emailSheet, allBankDeposits);
 
   } catch (error) {
     Logger.log('SCAN ERROR: ' + error.message);
@@ -443,52 +497,76 @@ function parseChaseDepositEmail(msg) {
   };
 }
 
-function matchChaseDepositsToTransfers(emailSheet, chaseDeposits) {
-  if (chaseDeposits.length === 0) return;
+function parseSCCUDepositEmail(msg) {
+  const body = msg.getPlainBody() || msg.getBody();
+  const date = msg.getDate().toISOString();
+
+  // Extract amount (e.g., "$665.70 payment")
+  const amountMatch = body.match(/\$([0-9,]+\.?\d*)\s*payment/i) ||
+                      body.match(/\$([0-9,]+\.?\d*)/);
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
+
+  // Extract confirmation number
+  const confMatch = body.match(/confirmation\s*number\s*(\d+)/i);
+  const confirmationNumber = confMatch ? confMatch[1] : 'sccu_' + msg.getId();
+
+  if (amount <= 0) return null;
+
+  return {
+    source: 'sccu_deposit',
+    confirmationNumber,
+    amount,
+    receivedAt: date
+  };
+}
+
+function matchBankDepositsToTransfers(emailSheet, bankDeposits) {
+  if (bankDeposits.length === 0) return;
 
   const now = new Date();
   const data = emailSheet.getDataRange().getValues();
-  // Column indices: Source=0, DAPaymentId=1, Amount=2, ReceivedAt=3, PaypalTransactionId=4, EstimatedArrival=5, ID=6
+  // Column indices (with UserEmail): UserEmail=0, Source=1, DAPaymentId=2, Amount=3, ReceivedAt=4, PaypalTransactionId=5, EstimatedArrival=6, ID=7
 
-  // Build list of Chase deposit amounts for matching
-  const depositAmounts = chaseDeposits.map(cd => cd.amount);
+  // Build list of deposit amounts for matching
+  const depositAmounts = bankDeposits.map(d => d.amount);
 
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] !== 'paypal_transfer') continue;
+    if (data[i][1] !== 'paypal_transfer') continue;
 
-    const transferAmount = parseFloat(data[i][2]) || 0;
-    const estimatedArrival = data[i][5] ? new Date(data[i][5]) : null;
+    const transferAmount = parseFloat(data[i][3]) || 0;
+    const estimatedArrival = data[i][6] ? new Date(data[i][6]) : null;
 
     // Only match transfers still "in progress" (estimated arrival in the future)
     if (!estimatedArrival || now >= estimatedArrival) continue;
 
-    // Check if any Chase deposit matches this transfer amount
+    // Check if any bank deposit matches this transfer amount
     const matchIdx = depositAmounts.indexOf(transferAmount);
     if (matchIdx !== -1) {
-      // Update EstimatedArrival to the Chase deposit date (in the past) so pipeline sees it as "In Bank"
-      const depositDate = chaseDeposits[matchIdx].receivedAt;
-      emailSheet.getRange(i + 1, 6).setValue(depositDate); // Column 6 = EstimatedArrival (1-indexed)
+      // Update EstimatedArrival to the deposit date (in the past) so pipeline sees it as "In Bank"
+      const depositDate = bankDeposits[matchIdx].receivedAt;
+      emailSheet.getRange(i + 1, 7).setValue(depositDate); // Column 7 = EstimatedArrival (1-indexed)
 
       // Remove matched deposit so it doesn't match again
       depositAmounts.splice(matchIdx, 1);
-      chaseDeposits.splice(matchIdx, 1);
-      if (chaseDeposits.length === 0) break;
+      bankDeposits.splice(matchIdx, 1);
+      if (bankDeposits.length === 0) break;
     }
   }
 }
 
 function getExistingEmailPayouts(emailSheet) {
-  // Column indices: Source=0, DAPaymentId=1, Amount=2, ReceivedAt=3, PaypalTransactionId=4, EstimatedArrival=5, ID=6
+  // Column indices (with UserEmail): UserEmail=0, Source=1, DAPaymentId=2, Amount=3, ReceivedAt=4, PaypalTransactionId=5, EstimatedArrival=6, ID=7
   const existing = new Map();
   const data = emailSheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
-    const source = data[i][0];
-    const daId = data[i][1];
-    const ppTxn = data[i][4];
-    const id = data[i][6];
+    const source = data[i][1];
+    const daId = data[i][2];
+    const ppTxn = data[i][5];
+    const id = data[i][7];
     if (source === 'dataannotation' && daId) existing.set(daId + '_da', id);
     if (source === 'paypal_transfer' && ppTxn) existing.set(ppTxn + '_pptx', id);
     if (source === 'chase_deposit' && daId) existing.set(daId + '_chase', id);
+    if (source === 'sccu_deposit' && daId) existing.set(daId + '_sccu', id);
   }
   return existing;
 }
@@ -639,6 +717,7 @@ function flagDuplicateWorkSessions() {
   var sheet = ss.getSheetByName('WorkSessions');
   var data = sheet.getDataRange().getValues();
   var headers = data[0];
+  var userCol = headers.indexOf('UserEmail');
   var subCol = headers.indexOf('SubmittedAt');
   var earnCol = headers.indexOf('Earnings');
   var idCol = headers.indexOf('ID');
@@ -650,7 +729,7 @@ function flagDuplicateWorkSessions() {
     return { error: 'Missing Date or Earnings column' };
   }
 
-  // Build map of (date + earnings) -> first row index
+  // Build map of (userEmail + date + earnings) -> first row index
   var seen = {};
   var duplicates = [];
 
@@ -658,7 +737,8 @@ function flagDuplicateWorkSessions() {
     var rowDate = data[i][dateCol] instanceof Date
       ? data[i][dateCol].toISOString().split('T')[0]
       : String(data[i][dateCol]).slice(0, 10);
-    var key = rowDate + '|' + String(parseFloat(data[i][earnCol]) || 0);
+    var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
+    var key = rowEmail + '|' + rowDate + '|' + String(parseFloat(data[i][earnCol]) || 0);
     if (seen[key] !== undefined) {
       duplicates.push({
         row: i + 1,
@@ -715,4 +795,47 @@ function clearEmailPayouts() {
   } else {
     Logger.log('EmailPayouts is already empty');
   }
+}
+
+// ============ Multi-User Migration ============
+
+// Run this ONCE from the Apps Script editor to add UserEmail column to all data tabs.
+// Inserts UserEmail as column A and backfills existing rows with the primary user's email.
+function migrateAddUserEmail() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var primaryEmail = 'dasatizabal@gmail.com';
+  var tabsToMigrate = ['WorkSessions', 'Goals', 'GoalAllocations', 'EmailPayouts'];
+
+  tabsToMigrate.forEach(function(tabName) {
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) {
+      Logger.log(tabName + ': Tab not found, skipping.');
+      return;
+    }
+
+    // Check if UserEmail column already exists
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (headers[0] === 'UserEmail') {
+      Logger.log(tabName + ': UserEmail column already exists, skipping.');
+      return;
+    }
+
+    // Insert column at position A
+    sheet.insertColumnBefore(1);
+    sheet.getRange(1, 1).setValue('UserEmail');
+
+    // Fill all existing data rows with primary user email
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      var values = [];
+      for (var i = 0; i < lastRow - 1; i++) {
+        values.push([primaryEmail]);
+      }
+      sheet.getRange(2, 1, lastRow - 1, 1).setValues(values);
+    }
+
+    Logger.log(tabName + ': Migrated ' + (lastRow - 1) + ' rows with UserEmail = ' + primaryEmail);
+  });
+
+  Logger.log('Migration complete!');
 }

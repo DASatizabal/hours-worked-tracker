@@ -58,14 +58,17 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-# Load .env from the tools/ directory
+# Load .env from the tools/ directory (--profile overrides in main())
 SCRIPT_DIR = Path(__file__).parent
 load_dotenv(SCRIPT_DIR / '.env')
 
 DA_EMAIL = os.getenv("DA_EMAIL")
 DA_PASSWORD = os.getenv("DA_PASSWORD")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD", "")
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
+DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")  # Multi-user: email to tag records with
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")  # 'gmail' or 'yahoo'
 DA_PAYMENTS_URL = "https://app.dataannotation.tech/workers/payments"
 HTML_OUTPUT_DIR = SCRIPT_DIR / "da_html_exports"
 
@@ -119,24 +122,32 @@ def is_today_payday(payday_weekday):
     return today_js == payday_weekday
 
 
-def fetch_verification_code_from_gmail(max_retries=5, retry_delay=5):
-    """Fetch a verification code from Gmail via IMAP.
+def fetch_verification_code_from_email(max_retries=5, retry_delay=5):
+    """Fetch a verification code from email via IMAP (Gmail or Yahoo).
 
     Searches recent emails from DataAnnotation for a numeric verification code.
     Retries several times since the email may take a few seconds to arrive.
     """
-    if not GMAIL_APP_PASSWORD:
-        log.error("GMAIL_APP_PASSWORD not set in .env — cannot fetch verification code.")
+    # Pick the right app password based on provider
+    if EMAIL_PROVIDER.lower() == 'yahoo':
+        app_password = YAHOO_APP_PASSWORD
+        imap_host = "imap.mail.yahoo.com"
+    else:
+        app_password = GMAIL_APP_PASSWORD
+        imap_host = "imap.gmail.com"
+
+    if not app_password:
+        log.error(f"{'YAHOO' if EMAIL_PROVIDER.lower() == 'yahoo' else 'GMAIL'}_APP_PASSWORD not set in .env — cannot fetch verification code.")
         return None
 
     sender_patterns = ["dataannotation", "noreply@"]
     code_pattern = re.compile(r'\b(\d{6})\b')
 
     for attempt in range(1, max_retries + 1):
-        log.info(f"  -> Checking Gmail for verification code (attempt {attempt}/{max_retries})...")
+        log.info(f"  -> Checking {EMAIL_PROVIDER} for verification code (attempt {attempt}/{max_retries})...")
         try:
-            mail = imaplib.IMAP4_SSL("imap.gmail.com", 993)
-            mail.login(DA_EMAIL, GMAIL_APP_PASSWORD)
+            mail = imaplib.IMAP4_SSL(imap_host, 993)
+            mail.login(DA_EMAIL, app_password)
             mail.select("INBOX")
 
             # Search for recent emails (last 2 minutes)
@@ -209,13 +220,13 @@ def fetch_verification_code_from_gmail(max_retries=5, retry_delay=5):
             log.error(f"  -> IMAP error: {e}")
             return None
         except Exception as e:
-            log.warning(f"  -> Gmail fetch error: {e}")
+            log.warning(f"  -> Email fetch error: {e}")
 
         if attempt < max_retries:
             log.info(f"     Code not found yet, retrying in {retry_delay}s...")
             time.sleep(retry_delay)
 
-    log.error("  -> Could not find verification code in Gmail after all retries.")
+    log.error(f"  -> Could not find verification code in {EMAIL_PROVIDER} after all retries.")
     return None
 
 
@@ -263,7 +274,7 @@ def login_to_da(page):
                 log.info("  -> Verification code prompt detected!")
 
                 # Fetch the code from Gmail
-                code = fetch_verification_code_from_gmail()
+                code = fetch_verification_code_from_email()
                 if not code:
                     log.error("  -> Failed to get verification code. Cannot proceed.")
                     raise Exception("Verification code required but could not be fetched from Gmail.")
@@ -748,8 +759,10 @@ def import_to_sheets(corrections, unmatched):
     for u in unmatched:
         da = u['da']
         record_id = f"ws_{int(time.time() * 1000)}_{os.urandom(4).hex()}"
+        user_email = DA_USER_EMAIL or DA_EMAIL
         record = {
             'id': record_id,
+            'userEmail': user_email,
             'date': da['submittedAt'][:10],
             'duration': da['duration'],
             'type': da['type'],
@@ -799,7 +812,26 @@ def main():
                         help="Unattended mode: headless, no prompts")
     parser.add_argument("--get-paid", action="store_true",
                         help="Click the 'Get paid' button to request payout")
+    parser.add_argument("--profile", default="default",
+                        help="Profile name: loads .env.<profile> instead of .env (e.g., --profile lisa)")
     args = parser.parse_args()
+
+    # Load profile-specific .env if not default
+    if args.profile != 'default':
+        global DA_EMAIL, DA_PASSWORD, GMAIL_APP_PASSWORD, YAHOO_APP_PASSWORD, APPS_SCRIPT_URL, DA_USER_EMAIL, EMAIL_PROVIDER
+        profile_env = SCRIPT_DIR / f'.env.{args.profile}'
+        if not profile_env.exists():
+            log.error(f"Profile .env file not found: {profile_env}")
+            sys.exit(1)
+        load_dotenv(profile_env, override=True)
+        DA_EMAIL = os.getenv("DA_EMAIL")
+        DA_PASSWORD = os.getenv("DA_PASSWORD")
+        GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+        YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD", "")
+        APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
+        DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")
+        EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")
+        log.info(f"Loaded profile: {args.profile} ({DA_EMAIL})")
 
     # --auto implies --headless
     if args.auto:

@@ -1,11 +1,18 @@
 // Configuration for Hours Worked Tracker
 
-const APP_VERSION = '1.9.3';
+const APP_VERSION = '2.0.0';
 
 // Auth roles
 const AUTH_ROLES = {
     PRIMARY_USER: 'dasatizabal@gmail.com',
-    ADMINS: ['dasatizabal@gmail.com']
+    ADMINS: ['dasatizabal@gmail.com'],
+    FAMILY: ['dasatizabal@gmail.com', 'Lisasatizabal@gmail.com']
+};
+
+// Display names for family members (used in family view badges)
+const USER_DISPLAY_NAMES = {
+    'dasatizabal@gmail.com': 'David',
+    'lisasatizabal@gmail.com': 'Lisa'
 };
 
 // Firebase Configuration

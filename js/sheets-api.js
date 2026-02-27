@@ -6,6 +6,7 @@ const SheetsAPI = {
     _syncStatus: 'synced',
     _lastSyncTime: null,
     _syncListeners: [],
+    _viewMode: 'personal',  // 'personal' or 'family'
 
     onSyncStatusChange(callback) {
         this._syncListeners.push(callback);
@@ -19,6 +20,23 @@ const SheetsAPI = {
 
     getSyncStatus() {
         return { status: this._syncStatus, lastSync: this._lastSyncTime };
+    },
+
+    // Multi-user view mode
+    setViewMode(mode) {
+        this._viewMode = mode;
+        this._sessionCache = {};  // Clear cache when switching views
+    },
+
+    getViewMode() {
+        return this._viewMode;
+    },
+
+    _getCurrentUserEmail() {
+        if (typeof FirebaseAuth !== 'undefined' && FirebaseAuth.isSignedIn()) {
+            return FirebaseAuth.getUserEmail() || '';
+        }
+        return '';
     },
 
     isConfigured() {
@@ -67,6 +85,11 @@ const SheetsAPI = {
     },
 
     async save(tab, record) {
+        // Inject userEmail for multi-user support (skip for shared tabs)
+        if (!record.userEmail && tab !== CONFIG.SHEETS.SETTINGS && tab !== CONFIG.SHEETS.CRUISE_PAYMENTS) {
+            record.userEmail = this._getCurrentUserEmail();
+        }
+
         const prefixMap = {
             [CONFIG.SHEETS.WORK_SESSIONS]: 'ws_',
             [CONFIG.SHEETS.PAYMENTS]: 'pmt_',
@@ -192,7 +215,10 @@ const SheetsAPI = {
     async _getFromSheets(tab) {
         this._setSyncStatus('syncing');
         try {
-            const url = this.getActiveAppsScriptUrl() + '?tab=' + encodeURIComponent(tab);
+            let url = this.getActiveAppsScriptUrl() + '?tab=' + encodeURIComponent(tab);
+            const userEmail = this._getCurrentUserEmail();
+            if (userEmail) url += '&userEmail=' + encodeURIComponent(userEmail);
+            url += '&view=' + encodeURIComponent(this._viewMode);
             const response = await fetch(url);
             if (!response.ok) throw new Error('Failed to fetch from Apps Script');
             const data = await response.json();

@@ -210,6 +210,15 @@ const App = {
         if (user.photoURL) avatar.src = user.photoURL;
         name.textContent = FirebaseAuth.getUserFirstName();
 
+        // Show family view toggle for family members
+        if (FirebaseAuth.isFamilyMember()) {
+            const toggleBtn = document.getElementById('view-toggle-btn');
+            if (toggleBtn) {
+                toggleBtn.classList.remove('hidden');
+                toggleBtn.classList.add('flex');
+            }
+        }
+
         await this.loadData();
         this.startPolling();
     },
@@ -361,6 +370,9 @@ const App = {
         document.getElementById('export-payments-csv')?.addEventListener('click', () => SheetsAPI.exportPaymentsCSV());
         document.getElementById('export-tax-csv')?.addEventListener('click', () => SheetsAPI.exportTaxSummaryCSV());
 
+        // Family view toggle
+        document.getElementById('view-toggle-btn')?.addEventListener('click', () => this.toggleViewMode());
+
         // Scan emails
         document.getElementById('scan-emails-btn')?.addEventListener('click', () => this.scanEmails());
 
@@ -461,7 +473,20 @@ const App = {
         const totalHours = sessions.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0);
 
         document.getElementById('week-earnings').textContent = formatCurrency(Math.max(0, unpaid));
-        document.getElementById('week-hours').textContent = totalHours.toFixed(1) + ' hours worked';
+
+        // In family view, show per-person breakdown
+        const isFamilyView = SheetsAPI.getViewMode() === 'family';
+        if (isFamilyView && sessions.length > 0) {
+            const currentEmail = (FirebaseAuth.getUserEmail() || '').toLowerCase();
+            const myEarnings = sessions.filter(s => (s.userEmail || '').toLowerCase() === currentEmail)
+                .reduce((sum, s) => sum + (parseFloat(s.earnings) || 0), 0);
+            const otherEarnings = totalEarnings - myEarnings;
+            const myName = USER_DISPLAY_NAMES[currentEmail] || 'You';
+            const otherName = Object.entries(USER_DISPLAY_NAMES).find(([e]) => e !== currentEmail)?.[1] || 'Partner';
+            document.getElementById('week-hours').textContent = `${myName}: ${formatCurrency(myEarnings)} | ${otherName}: ${formatCurrency(otherEarnings)}`;
+        } else {
+            document.getElementById('week-hours').textContent = totalHours.toFixed(1) + ' hours worked';
+        }
         document.getElementById('week-tax').textContent = formatCurrency(TaxCalc.calcTax(Math.max(0, unpaid)));
         document.getElementById('week-net').textContent = 'Net: ' + formatCurrency(TaxCalc.calcNet(Math.max(0, unpaid)));
         const taxLabel = document.getElementById('tax-card-label');
@@ -510,11 +535,21 @@ const App = {
 
         if (empty) empty.classList.add('hidden');
 
+        const isFamilyView = SheetsAPI.getViewMode() === 'family';
         tbody.innerHTML = sorted.map(s => {
             const countdown = getPayoutCountdown(s);
+            const userBadge = isFamilyView && s.userEmail
+                ? (() => {
+                    const email = s.userEmail.toLowerCase();
+                    const displayName = USER_DISPLAY_NAMES[email] || email.split('@')[0];
+                    const isMe = email === (FirebaseAuth.getUserEmail() || '').toLowerCase();
+                    const badgeClass = isMe ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400';
+                    return `<span class="px-1.5 py-0.5 text-[10px] rounded-full ${badgeClass} ml-1">${displayName}</span>`;
+                })()
+                : '';
             return `
             <tr class="hover:bg-white/5 transition-colors">
-                <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}</td>
+                <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}${userBadge}</td>
                 <td class="px-4 py-3 text-sm">
                     <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : 'Task'}</span>
                 </td>
@@ -1288,6 +1323,33 @@ const App = {
         if (typeof lucide !== 'undefined') lucide.createIcons();
     },
 
+    // ============ Family View Toggle ============
+
+    toggleViewMode() {
+        const current = SheetsAPI.getViewMode();
+        const next = current === 'personal' ? 'family' : 'personal';
+        SheetsAPI.setViewMode(next);
+
+        const label = document.getElementById('view-toggle-label');
+        const btn = document.getElementById('view-toggle-btn');
+        const icon = btn?.querySelector('i');
+
+        if (next === 'family') {
+            label.textContent = 'Family';
+            icon?.setAttribute('data-lucide', 'users');
+            btn?.classList.add('border-violet-500/50', 'text-violet-400');
+            btn?.classList.remove('text-slate-400');
+        } else {
+            label.textContent = 'My Data';
+            icon?.setAttribute('data-lucide', 'user');
+            btn?.classList.remove('border-violet-500/50', 'text-violet-400');
+            btn?.classList.add('text-slate-400');
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        this.loadData();
+    },
+
     // ============ Email Scanning ============
 
     async scanEmails() {
@@ -1307,10 +1369,10 @@ const App = {
             const results = data.results || {};
             const daCount = results.daPayouts || 0;
             const ptCount = results.paypalTransfers || 0;
-            const chaseCount = results.chaseDeposits || 0;
+            const bankCount = (results.chaseDeposits || 0) + (results.sccuDeposits || 0);
             const newCount = results.newRecords || 0;
 
-            this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers, ${chaseCount} deposits. ${newCount} new records saved.`, 'success');
+            this.showToast(`Found ${daCount} DA payouts, ${ptCount} transfers, ${bankCount} deposits. ${newCount} new records saved.`, 'success');
 
             // Sync polling marker so poller doesn't trigger redundant reload
             const scanStatus = await SheetsAPI.getScanStatus();

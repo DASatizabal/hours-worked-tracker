@@ -5,7 +5,7 @@
 - [x] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
 - [x] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
 - [x] **Install Python dependencies** — `pip install playwright python-dotenv requests && playwright install chromium`
-- [ ] **Set up Windows Task Scheduler** — daily trigger (see setup instructions below)
+- [x] **Set up Windows Task Scheduler** — daily trigger (see setup instructions below)
 
 ## DA Scraper Setup Instructions
 
