@@ -235,8 +235,14 @@ const App = {
     async loadData() {
         this.showLoading(true);
         try {
-            const sessions = await SheetsAPI.getWorkSessions();
-            const emailPayouts = await SheetsAPI.getEmailPayouts();
+            // Fetch all data in parallel for faster load
+            const [sessions, emailPayouts, goals, allocations, cruisePayments] = await Promise.all([
+                SheetsAPI.getWorkSessions(),
+                SheetsAPI.getEmailPayouts(),
+                SheetsAPI.getGoals(),
+                SheetsAPI.getGoalAllocations(),
+                SheetsAPI.getCruisePayments()
+            ]);
 
             // Store for timer updates
             this._cachedSessions = sessions;
@@ -245,7 +251,7 @@ const App = {
             this.renderDashboard(sessions, emailPayouts);
             this.renderSessionsTable(sessions);
             Pipeline.renderPipeline(sessions, emailPayouts);
-            await Goals.renderGoals();
+            await Goals.renderGoalsWithData(goals, allocations, cruisePayments);
 
             // Start pipeline refresh timer (updates every minute)
             this.startPipelineTimer();

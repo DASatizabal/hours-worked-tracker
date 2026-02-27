@@ -89,16 +89,23 @@ const Goals = {
         };
     },
 
-    // Render all goal cards
+    // Render all goal cards (fetches own data)
     async renderGoals() {
+        const [goals, allocations, cruisePayments] = await Promise.all([
+            SheetsAPI.getGoals(),
+            SheetsAPI.getGoalAllocations(),
+            SheetsAPI.getCruisePayments()
+        ]);
+        this._cruisePaymentsCache = cruisePayments;
+        return this.renderGoalsWithData(goals, allocations, cruisePayments);
+    },
+
+    // Render goal cards with pre-fetched data (avoids duplicate API calls)
+    async renderGoalsWithData(goals, allocations, cruisePayments) {
         const container = document.getElementById('goals-container');
         if (!container) return;
 
-        // Fetch cruise payments from Sheets (for cruise goal progress)
-        await this.fetchCruisePayments();
-
-        const goals = await SheetsAPI.getGoals();
-        const allocations = await SheetsAPI.getGoalAllocations();
+        this._cruisePaymentsCache = cruisePayments;
 
         if (goals.length === 0) {
             container.innerHTML = `
