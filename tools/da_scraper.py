@@ -69,6 +69,7 @@ YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD", "")
 APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
 DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")  # Multi-user: email to tag records with
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")  # 'gmail' or 'yahoo'
+IMAP_EMAIL = os.getenv("IMAP_EMAIL", "")  # IMAP login email (defaults to DA_EMAIL if not set)
 DA_PAYMENTS_URL = "https://app.dataannotation.tech/workers/payments"
 HTML_OUTPUT_DIR = SCRIPT_DIR / "da_html_exports"
 
@@ -140,14 +141,17 @@ def fetch_verification_code_from_email(max_retries=5, retry_delay=5):
         log.error(f"{'YAHOO' if EMAIL_PROVIDER.lower() == 'yahoo' else 'GMAIL'}_APP_PASSWORD not set in .env — cannot fetch verification code.")
         return None
 
+    # IMAP login email: use IMAP_EMAIL if set, otherwise DA_EMAIL
+    imap_login = IMAP_EMAIL or DA_EMAIL
+
     sender_patterns = ["dataannotation", "noreply@"]
     code_pattern = re.compile(r'\b(\d{6})\b')
 
     for attempt in range(1, max_retries + 1):
-        log.info(f"  -> Checking {EMAIL_PROVIDER} for verification code (attempt {attempt}/{max_retries})...")
+        log.info(f"  -> Checking {EMAIL_PROVIDER} ({imap_login}) for verification code (attempt {attempt}/{max_retries})...")
         try:
             mail = imaplib.IMAP4_SSL(imap_host, 993)
-            mail.login(DA_EMAIL, app_password)
+            mail.login(imap_login, app_password)
             mail.select("INBOX")
 
             # Search for recent emails (last 2 minutes)
@@ -818,7 +822,7 @@ def main():
 
     # Load profile-specific .env if not default
     if args.profile != 'default':
-        global DA_EMAIL, DA_PASSWORD, GMAIL_APP_PASSWORD, YAHOO_APP_PASSWORD, APPS_SCRIPT_URL, DA_USER_EMAIL, EMAIL_PROVIDER
+        global DA_EMAIL, DA_PASSWORD, GMAIL_APP_PASSWORD, YAHOO_APP_PASSWORD, APPS_SCRIPT_URL, DA_USER_EMAIL, EMAIL_PROVIDER, IMAP_EMAIL
         profile_env = SCRIPT_DIR / f'.env.{args.profile}'
         if not profile_env.exists():
             log.error(f"Profile .env file not found: {profile_env}")
@@ -831,6 +835,7 @@ def main():
         APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
         DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")
         EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")
+        IMAP_EMAIL = os.getenv("IMAP_EMAIL", "")
         log.info(f"Loaded profile: {args.profile} ({DA_EMAIL})")
 
     # --auto implies --headless
