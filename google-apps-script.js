@@ -240,7 +240,7 @@ function scanEmails() {
   try {
     // Tag all records with the deployer's email for multi-user support
     var deployerEmail = '';
-    try { deployerEmail = Session.getActiveUser().getEmail() || ''; } catch(e) { /* fallback */ }
+    try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) { /* fallback */ }
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
