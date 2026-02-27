@@ -1,67 +1,57 @@
 # Hours Worked Tracker - TODO
 
-## Open Items (USER ACTION NEEDED)
-- [x] **Deploy v1.8.0 google-apps-script.js** — upsertSetting endpoint for payday sync
-- [x] **Set up tools/.env** — copy from .env.example, fill in DA credentials + Apps Script URL
-- [x] **Save payday setting** — open Settings in the app and click Save to push payday to Google Sheets
-- [x] **Install Python dependencies** — `pip install playwright python-dotenv requests && playwright install chromium`
-- [x] **Set up Windows Task Scheduler** — daily trigger (see setup instructions below)
+## Open Items
+_No open items._
 
 ## DA Scraper Setup Instructions
 
-### 1. Deploy Apps Script
-Copy the updated `google-apps-script.js` into your Apps Script editor and redeploy.
+### David's setup
+1. `tools/.env` with DA_EMAIL, DA_PASSWORD, APPS_SCRIPT_URL, GMAIL_APP_PASSWORD
+2. Task Scheduler: "DA Payment Scrape" — daily, runs `run_scraper.bat`
+3. Task Scheduler: "DA Get Paid" — daily at noon, runs `run_get_paid.bat` (payday check in script)
 
-### 2. Create `tools/.env`
-Copy from `.env.example` and fill in your credentials:
-```
-DA_EMAIL=your_email@example.com
-DA_PASSWORD=your_password
-APPS_SCRIPT_URL=https://script.google.com/macros/s/AKfycbw.../exec
-```
-
-### 3. Install Python dependencies
-```
-pip install playwright python-dotenv requests
-playwright install chromium
-```
-
-### 4. Save payday in the app
-Open Settings in the tracker app and click Save. This pushes the payday weekday to Google Sheets so the scraper can read it.
-
-### 5. Set up Windows Task Scheduler
-1. Open Task Scheduler > Create Basic Task
-2. Name: "DA Payment Scrape"
-3. Trigger: **Daily**, pick a morning time (e.g., 8:00 AM)
-4. Action: Start a Program
-   - Program: `python`
-   - Arguments: `"L:\David's Folder\Claude Projects\hours-worked-tracker\tools\da_scraper.py" --auto`
-   - Start in: `"L:\David's Folder\Claude Projects\hours-worked-tracker\tools"`
-
-The script runs daily but checks Google Sheets for your payday setting. On non-payday it exits immediately. On payday it scrapes DA, auto-imports into the tracker, and saves an HTML backup to `tools/da_html_exports/`.
+### Lisa's setup
+1. `tools/.env.lisa` with DA_EMAIL, DA_PASSWORD, DA_USER_EMAIL, APPS_SCRIPT_URL, EMAIL_PROVIDER=gmail, IMAP_EMAIL, GMAIL_APP_PASSWORD
+2. Gmailify links Yahoo (`Lisa_Blackford@yahoo.com`) to Gmail (`Lisasatizabal@gmail.com`)
+3. Lisa deploys her own Apps Script (same SHEET_ID, runs as her account for GmailApp)
+4. Task Scheduler: "DA Scrape - Lisa" — daily 8:30 AM, runs `run_scraper_lisa.bat`
+5. Task Scheduler: "DA Get Paid - Lisa" — daily noon, runs `run_get_paid_lisa.bat` (payday check in script)
 
 ### Manual usage
 ```
-python tools/da_scraper.py              # Full flow: scrape + auto-import (checks payday)
+python tools/da_scraper.py              # Full flow: scrape + auto-import
 python tools/da_scraper.py --force      # Run regardless of payday
 python tools/da_scraper.py --html-only  # Just save HTML, skip import
 python tools/da_scraper.py --show-paid  # Include already-paid entries
 python tools/da_scraper.py --auto       # Unattended: headless, no prompts
+python tools/da_scraper.py --get-paid --auto  # Claim payment (headless)
+python tools/da_scraper.py --profile lisa     # Use Lisa's profile
 ```
 
 Logs are saved to `tools/logs/`.
+
+## v2.0.x Features (COMPLETED)
+- [x] Multi-user support with UserEmail column on data tabs (v2.0.0)
+- [x] Family view toggle — personal/family mode with user badges (v2.0.0)
+- [x] SCCU deposit email scanning for Lisa's bank (v2.0.0)
+- [x] Per-user localStorage prefixes for cache isolation (v2.0.0)
+- [x] Python scraper --profile flag for multi-user (.env.lisa) (v2.0.0)
+- [x] Pass userEmail from frontend to scanEmails — Session API returns empty in web apps (v2.0.1)
+- [x] IMAP_EMAIL env var for Gmailify — IMAP login differs from DA_EMAIL (v2.0.2)
+- [x] Fix false offline status when remote returns empty for new users (v2.0.3)
+- [x] Parallelize all API calls on page load — 30s → 5s load time (v2.0.4)
+
+## v1.9.x Features (COMPLETED)
+- [x] Dedup utilities to flag and remove duplicate WorkSessions (v1.9.0)
+- [x] Expose dedup utilities via HTTP and return structured JSON (v1.9.1)
+- [x] Round hourlyRate to whole dollars, duration to 2dp, fix dedup matching (v1.9.2)
+- [x] Diagnostic logging in scanEmails for future debugging (v1.9.3)
 
 ## v1.8.x Features (COMPLETED)
 - [x] Automated weekly DA scraper with payday-aware scheduling (v1.8.0)
 - [x] Full browser auto-import: scrape → parse → apply corrections → add new entries
 - [x] Payday setting synced to Google Sheets for scraper access
 - [x] Apps Script upsertSetting endpoint for key/value settings
-
-## Completed Housekeeping
-- [x] Deploy v1.7.8 google-apps-script.js — Chase deposit scanning, version bump
-- [x] Update Google Sheet tabs — removed StartTime/EndTime columns and Payments tab
-- [x] Clean up old manually-entered data — removed test entries, verified IDs
-- [x] Test edit/delete sessions — pre-fill and sheet deletion verified
 
 ## v1.7.x Features (COMPLETED)
 - [x] DA HTML import to reconcile work sessions and correct submittedAt timestamps (v1.7.0)
@@ -74,35 +64,9 @@ Logs are saved to `tools/logs/`.
 - [x] Estimated arrival date under Transferring pipeline stage (v1.7.7)
 - [x] Chase deposit email scanning to confirm bank arrivals (v1.7.8)
 
-## v1.6.x Features (COMPLETED)
-- [x] Est. Next Paycheck card with configurable payout day (v1.6.0)
-- [x] Show gross and net on Est. Next Paycheck card (v1.6.1)
-
-## v1.5.x Features (COMPLETED)
-- [x] Pipeline overhaul: calculate from WorkSessions + EmailPayouts instead of Payments table (v1.5.0)
-- [x] Submitted = work sessions where payout time hasn't elapsed
-- [x] Available for Payout = sessions past time - DA email totals
-- [x] In PayPal = DA email totals - PayPal transfer totals
-- [x] Transferring/In Bank based on PayPal transfer EstimatedArrival
-- [x] Parse "Estimated arrival: X business day" from PayPal emails
-- [x] Automatic hourly email scanning trigger (v1.5.1)
-- [x] Fix PayPal transfer estimated arrival parsing (v1.5.2)
-- [x] DA payout cooldown timer — 72h countdown with color coding (v1.5.3)
-- [x] Auto-refresh pipeline every 60 seconds (v1.5.4)
-- [x] Cross-repo cruise goal sync with cruise-payment-tracker (v1.5.5)
-- [x] CruisePayments tab for cross-app sync (v1.5.6)
-- [x] Comma thousands separator formatting throughout (v1.5.7)
-- [x] Payout countdown timer in work sessions table (v1.5.8)
-- [x] Sortable columns and filter dropdown on sessions table (v1.5.9)
-- [x] Fix payout column sorting to use actual remaining time (v1.5.10)
-- [x] Fix dropdown option styling for dark/light modes (v1.5.11)
-
-## Earlier Features (COMPLETED)
+## v1.6.x and Earlier (COMPLETED)
+- [x] Est. Next Paycheck card with configurable payout day (v1.6.0–v1.6.1)
+- [x] Pipeline overhaul with EmailPayouts-based tracking (v1.5.0–v1.5.11)
 - [x] Pipeline stage rename and payout hours update (v1.4.0–v1.4.1)
-- [x] Dashboard "Total Amount to be Paid" shows earnings minus In Bank (v1.3.0)
-- [x] Tax card label shows configured rate dynamically (v1.3.2)
-- [x] Goal emoji icon picker (v1.3.0)
-- [x] Fast modal/delete feedback (v1.3.0–v1.4.0)
-- [x] Double-submit prevention on all forms (v1.3.0)
-- [x] Fix camelCase for PascalCase headers like ProjectID/ID
-- [x] Deploy Apps Script with EstimatedArrival parsing, clearEmailPayouts utility
+- [x] Dashboard, goals, tax calc, modal/delete improvements (v1.3.0–v1.3.2)
+- [x] camelCase fix, Apps Script EstimatedArrival parsing

@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.4
+ * VERSION: 2.0.5
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -239,7 +239,13 @@ function scanEmails(userEmail) {
 
   try {
     // Tag all records with the caller's email for multi-user support
-    var deployerEmail = userEmail || '';
+    // When called from a time trigger, userEmail is an event object — fall back to Session API
+    var deployerEmail = '';
+    if (typeof userEmail === 'string' && userEmail.indexOf('@') > -1) {
+      deployerEmail = userEmail;
+    } else {
+      try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) {}
+    }
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
