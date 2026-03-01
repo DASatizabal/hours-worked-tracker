@@ -15,8 +15,54 @@ function formatNumber(num, decimals = 2) {
     });
 }
 
+// Determine which sessions have been paid out (DA payout covers them FIFO, per user)
+function getPaidOutSessionIds(sessions, emailPayouts) {
+    const now = new Date();
+    const paidIds = new Set();
+
+    // Group sessions past waiting period by user, sorted oldest-first
+    const byUser = {};
+    sessions.forEach(s => {
+        if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
+        const submittedAt = new Date(s.submittedAt);
+        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+        if (now < payoutExpected) return;
+        const email = (s.userEmail || '').toLowerCase();
+        if (!byUser[email]) byUser[email] = [];
+        byUser[email].push(s);
+    });
+
+    // Sort each user's sessions oldest-first
+    Object.values(byUser).forEach(arr => arr.sort((a, b) => (a.submittedAt || '').localeCompare(b.submittedAt || '')));
+
+    // Sum DA payouts per user
+    const daTotals = {};
+    (emailPayouts || []).forEach(e => {
+        if (e.source !== 'dataannotation') return;
+        const email = (e.userEmail || '').toLowerCase();
+        daTotals[email] = (daTotals[email] || 0) + (parseFloat(e.amount) || 0);
+    });
+
+    // Walk each user's sessions oldest-first, covering with their DA total
+    for (const email of Object.keys(byUser)) {
+        let remaining = daTotals[email] || 0;
+        for (const s of byUser[email]) {
+            const earnings = parseFloat(s.earnings) || 0;
+            if (remaining >= earnings) {
+                remaining -= earnings;
+                paidIds.add(s.id);
+            } else {
+                break;
+            }
+        }
+    }
+
+    return paidIds;
+}
+
 // Calculate payout countdown for a work session
-function getPayoutCountdown(session) {
+function getPayoutCountdown(session, isPaidOut) {
     if (!session.submittedAt) {
         return { html: '-', expired: true };
     }
@@ -29,8 +75,10 @@ function getPayoutCountdown(session) {
 
     // Already available for payout
     if (remainingMs <= 0) {
+        // Show money sign if paid out, check mark if just available
+        const icon = isPaidOut ? '$' : '✓';
         return {
-            html: '<span class="text-emerald-400">✓</span>',
+            html: `<span class="text-emerald-400">${icon}</span>`,
             expired: true
         };
     }
@@ -542,8 +590,9 @@ const App = {
         if (empty) empty.classList.add('hidden');
 
         const isFamilyView = SheetsAPI.getViewMode() === 'family';
+        const paidOutIds = getPaidOutSessionIds(sessions, this._cachedEmailPayouts);
         tbody.innerHTML = sorted.map(s => {
-            const countdown = getPayoutCountdown(s);
+            const countdown = getPayoutCountdown(s, paidOutIds.has(s.id));
             const userBadge = isFamilyView && s.userEmail
                 ? (() => {
                     const email = s.userEmail.toLowerCase();
