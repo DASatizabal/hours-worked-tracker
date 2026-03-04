@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.8
+ * VERSION: 2.0.9
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -284,29 +284,34 @@ function scanEmails(userEmail) {
       });
     });
 
-    // Scan Chase deposit emails (last 30 days) - money confirmed in bank
-    const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
-    Logger.log('Chase threads found: ' + chaseThreads.length);
+    // Scan Chase deposit emails (David only) - money confirmed in bank
     const chaseDeposits = [];
+    if (deployerEmail.toLowerCase() === 'dasatizabal@gmail.com') {
+      const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
+      Logger.log('Chase threads found: ' + chaseThreads.length);
 
-    chaseThreads.forEach(thread => {
-      thread.getMessages().forEach(msg => {
-        try {
-          const parsed = parseChaseDepositEmail(msg);
-          if (parsed) {
-            chaseDeposits.push(parsed);
-            results.chaseDeposits++;
+      chaseThreads.forEach(thread => {
+        thread.getMessages().forEach(msg => {
+          try {
+            const parsed = parseChaseDepositEmail(msg);
+            if (parsed) {
+              chaseDeposits.push(parsed);
+              results.chaseDeposits++;
+            }
+          } catch (err) {
+            results.errors.push('Chase parse error: ' + err.message);
           }
-        } catch (err) {
-          results.errors.push('Chase parse error: ' + err.message);
-        }
+        });
       });
-    });
+    } else {
+      Logger.log('Skipping Chase scan (not David)');
+    }
 
-    // Scan SCCU deposit emails (last 30 days) - money confirmed in bank (Lisa's bank)
-    const sccuThreads = GmailApp.search('from:payments@sccu.com subject:"We deposited your payment" newer_than:30d', 0, 50);
-    Logger.log('SCCU threads found: ' + sccuThreads.length);
+    // Scan SCCU deposit emails (Lisa only) - money confirmed in bank
     const sccuDeposits = [];
+    if (deployerEmail.toLowerCase() === 'lisasatizabal@gmail.com') {
+      const sccuThreads = GmailApp.search('from:payments@sccu.com subject:"We deposited your payment" newer_than:30d', 0, 50);
+      Logger.log('SCCU threads found: ' + sccuThreads.length);
 
     sccuThreads.forEach(thread => {
       thread.getMessages().forEach(msg => {
@@ -321,6 +326,9 @@ function scanEmails(userEmail) {
         }
       });
     });
+    } else {
+      Logger.log('Skipping SCCU scan (not Lisa)');
+    }
 
     // Save to EmailPayouts tab
     const sheet = SpreadsheetApp.openById(SHEET_ID);
@@ -357,7 +365,37 @@ function scanEmails(userEmail) {
       }
     });
 
-    // Save Chase deposit records
+    // Filter bank deposits: only keep those matching a PayPal transfer amount.
+    // This prevents non-DA deposits (salary, etc.) from polluting the pipeline.
+    var availablePaypalAmounts = [];
+    var existingBankAmounts = [];
+    var sheetData = emailSheet.getDataRange().getValues();
+    for (var i = 1; i < sheetData.length; i++) {
+      var rowSource = sheetData[i][1];
+      var rowAmount = parseFloat(sheetData[i][3]) || 0;
+      if (rowSource === 'paypal_transfer') availablePaypalAmounts.push(rowAmount);
+      if (rowSource === 'chase_deposit' || rowSource === 'sccu_deposit') existingBankAmounts.push(rowAmount);
+    }
+    // Consume PayPal amounts already matched to existing bank deposits
+    existingBankAmounts.forEach(function(amt) {
+      var idx = availablePaypalAmounts.indexOf(amt);
+      if (idx !== -1) availablePaypalAmounts.splice(idx, 1);
+    });
+    // Only keep new bank deposits that match an unmatched PayPal transfer
+    chaseDeposits = chaseDeposits.filter(function(cd) {
+      var idx = availablePaypalAmounts.indexOf(cd.amount);
+      if (idx !== -1) { availablePaypalAmounts.splice(idx, 1); return true; }
+      Logger.log('Skipping Chase deposit $' + cd.amount + ' — no matching PayPal transfer');
+      return false;
+    });
+    sccuDeposits = sccuDeposits.filter(function(sd) {
+      var idx = availablePaypalAmounts.indexOf(sd.amount);
+      if (idx !== -1) { availablePaypalAmounts.splice(idx, 1); return true; }
+      Logger.log('Skipping SCCU deposit $' + sd.amount + ' — no matching PayPal transfer');
+      return false;
+    });
+
+    // Save Chase deposit records (only PayPal-matched)
     chaseDeposits.forEach(cd => {
       if (!existingEmails.has(cd.chaseMessageId + '_chase')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -367,7 +405,7 @@ function scanEmails(userEmail) {
       }
     });
 
-    // Save SCCU deposit records
+    // Save SCCU deposit records (only PayPal-matched)
     sccuDeposits.forEach(sd => {
       if (!existingEmails.has(sd.confirmationNumber + '_sccu')) {
         const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
