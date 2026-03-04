@@ -124,6 +124,7 @@ const Pipeline = {
         let transfersCompleted = 0;
         let transfersInProgress = 0;
         let bankDeposits = 0;
+        const completedTransferAmounts = [];
 
         emailPayouts.forEach(e => {
             const amount = parseFloat(e.amount) || 0;
@@ -135,6 +136,7 @@ const Pipeline = {
                 const estimatedArrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
                 if (estimatedArrival && now >= estimatedArrival) {
                     transfersCompleted += amount;
+                    completedTransferAmounts.push(amount);
                 } else {
                     transfersInProgress += amount;
                 }
@@ -143,17 +145,32 @@ const Pipeline = {
             }
         });
 
+        // Deduplicate: bank deposits that match a completed PayPal transfer are the same money
+        // (matchBankDepositsToTransfers links them in Apps Script), so don't count both
+        let unmatchedBankDeposits = bankDeposits;
+        const usedTransfers = [];
+        emailPayouts.forEach(e => {
+            if (e.source !== 'chase_deposit' && e.source !== 'sccu_deposit') return;
+            const amt = parseFloat(e.amount) || 0;
+            const idx = completedTransferAmounts.findIndex((t, i) => t === amt && !usedTransfers.includes(i));
+            if (idx !== -1) {
+                unmatchedBankDeposits -= amt;
+                usedTransfers.push(idx);
+            }
+        });
+        unmatchedBankDeposits = Math.max(0, unmatchedBankDeposits);
+
         // Available for Payout = sessions past waiting - DA payouts received (min 0)
         totals.pending_payout = Math.max(0, sessionsPastWaiting - daTotal);
 
-        // In PayPal = DA payouts - transfers - direct bank deposits (min 0)
-        totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - bankDeposits);
+        // In PayPal = DA payouts - transfers - unmatched bank deposits (min 0)
+        totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - unmatchedBankDeposits);
 
         // Transferring = transfers in progress
         totals.transferring = transfersInProgress;
 
-        // In Bank = completed transfers + direct bank deposits
-        totals.in_bank = transfersCompleted + bankDeposits;
+        // In Bank = completed transfers + unmatched bank deposits (no double-counting)
+        totals.in_bank = transfersCompleted + unmatchedBankDeposits;
 
         return totals;
     },
