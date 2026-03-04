@@ -123,6 +123,7 @@ const Pipeline = {
         let daTotal = 0;
         let transfersCompleted = 0;
         let transfersInProgress = 0;
+        let bankDeposits = 0;
 
         emailPayouts.forEach(e => {
             const amount = parseFloat(e.amount) || 0;
@@ -137,20 +138,22 @@ const Pipeline = {
                 } else {
                     transfersInProgress += amount;
                 }
+            } else if (e.source === 'chase_deposit' || e.source === 'sccu_deposit') {
+                bankDeposits += amount;
             }
         });
 
         // Available for Payout = sessions past waiting - DA payouts received (min 0)
         totals.pending_payout = Math.max(0, sessionsPastWaiting - daTotal);
 
-        // In PayPal = DA payouts - transfers (min 0)
-        totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress);
+        // In PayPal = DA payouts - transfers - direct bank deposits (min 0)
+        totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - bankDeposits);
 
         // Transferring = transfers in progress
         totals.transferring = transfersInProgress;
 
-        // In Bank = completed transfers
-        totals.in_bank = transfersCompleted;
+        // In Bank = completed transfers + direct bank deposits
+        totals.in_bank = transfersCompleted + bankDeposits;
 
         return totals;
     },
@@ -255,6 +258,12 @@ const Pipeline = {
                         stage = 'transferring';
                         label = 'Transferring';
                     }
+                } else if (e.source === 'chase_deposit') {
+                    stage = 'in_bank';
+                    label = 'Chase Deposit';
+                } else if (e.source === 'sccu_deposit') {
+                    stage = 'in_bank';
+                    label = 'SCCU Deposit';
                 }
 
                 const colors = this.STAGE_COLORS[stage];

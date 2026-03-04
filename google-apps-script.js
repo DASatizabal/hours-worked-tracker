@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.6
+ * VERSION: 2.0.8
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -505,6 +505,9 @@ function parseChaseDepositEmail(msg) {
 function parseSCCUDepositEmail(msg) {
   const body = msg.getPlainBody() || msg.getBody();
   const date = msg.getDate().toISOString();
+
+  // Only match deposits to the specific account we're tracking
+  if (!/account\s+ending\s+in\s+7300/i.test(body)) return null;
 
   // Extract amount (e.g., "$665.70 payment")
   const amountMatch = body.match(/\$([0-9,]+\.?\d*)\s*payment/i) ||
