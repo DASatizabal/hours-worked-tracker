@@ -238,13 +238,14 @@ function scanEmails(userEmail) {
   const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, sccuDeposits: 0, newRecords: 0, errors: [] };
 
   try {
-    // Tag all records with the caller's email for multi-user support
-    // When called from a time trigger, userEmail is an event object — fall back to Session API
+    // Tag records with the actual Gmail account owner (whose inbox is being searched).
+    // Always prefer Session.getEffectiveUser() since GmailApp.search() searches that
+    // account's inbox — NOT the frontend caller's inbox. Using the caller's email
+    // would misattribute David's DA payouts and Chase deposits to Lisa when she triggers a scan.
     var deployerEmail = '';
-    if (typeof userEmail === 'string' && userEmail.indexOf('@') > -1) {
+    try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) {}
+    if (!deployerEmail && typeof userEmail === 'string' && userEmail.indexOf('@') > -1) {
       deployerEmail = userEmail;
-    } else {
-      try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) {}
     }
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
@@ -407,10 +408,11 @@ function parseDAPayoutEmail(msg) {
   const amountMatch = body.match(/\$([0-9,]+\.?\d*)/);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
 
-  // Extract payment ID
+  // Extract payment ID — use content-based fallback instead of msg.getId()
+  // so the same DA payout email in different inboxes gets the same dedup key
   const idMatch = body.match(/payment\s*(?:id|#|ID)[:\s]*([A-Za-z0-9_-]+)/i) ||
                   body.match(/([A-Za-z0-9]{8,})/);
-  const daPaymentId = idMatch ? idMatch[1] : 'da_' + msg.getId();
+  const daPaymentId = idMatch ? idMatch[1] : 'da_' + amount.toFixed(2) + '_' + date.slice(0, 10);
 
   if (amount <= 0) return null;
 
@@ -431,9 +433,9 @@ function parsePayPalTransferEmail(msg) {
                       body.match(/\$([0-9,]+\.?\d*)/);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
 
-  // Extract transaction ID (e.g., "45B70232UT209194H")
+  // Extract transaction ID (e.g., "45B70232UT209194H") — content-based fallback for cross-account dedup
   const txnMatch = body.match(/Transaction\s*ID[:\s]*([A-Za-z0-9]+)/i);
-  const paypalTransactionId = txnMatch ? txnMatch[1] : 'pptx_' + msg.getId();
+  const paypalTransactionId = txnMatch ? txnMatch[1] : 'pptx_' + amount.toFixed(2) + '_' + date.slice(0, 10);
 
   // Extract estimated arrival
   let estimatedArrival = '';
@@ -494,9 +496,12 @@ function parseChaseDepositEmail(msg) {
 
   if (amount <= 0) return null;
 
+  // Use content-based ID (amount + date) instead of msg.getId().
+  // msg.getId() is unique per Gmail account, so the same Chase deposit email
+  // in two different inboxes would get different IDs and bypass dedup.
   return {
     source: 'chase_deposit',
-    chaseMessageId: 'chase_' + msg.getId(),
+    chaseMessageId: 'chase_' + amount.toFixed(2) + '_' + date.slice(0, 10),
     amount,
     receivedAt: date
   };
@@ -511,9 +516,9 @@ function parseSCCUDepositEmail(msg) {
                       body.match(/\$([0-9,]+\.?\d*)/);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
 
-  // Extract confirmation number
+  // Extract confirmation number — content-based fallback for cross-account dedup
   const confMatch = body.match(/confirmation\s*number\s*(\d+)/i);
-  const confirmationNumber = confMatch ? confMatch[1] : 'sccu_' + msg.getId();
+  const confirmationNumber = confMatch ? confMatch[1] : 'sccu_' + amount.toFixed(2) + '_' + date.slice(0, 10);
 
   if (amount <= 0) return null;
 
