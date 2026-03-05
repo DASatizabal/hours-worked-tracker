@@ -575,20 +575,26 @@ function parseSCCUDepositEmail(msg) {
 }
 
 function matchBankDepositsToTransfers(emailSheet, bankDeposits) {
-  if (bankDeposits.length === 0) return;
+  if (bankDeposits.length === 0) {
+    Logger.log('matchBankDeposits: no bank deposits to match');
+    return;
+  }
 
   const now = new Date();
   const data = emailSheet.getDataRange().getValues();
   // Column indices (with UserEmail): UserEmail=0, Source=1, DAPaymentId=2, Amount=3, ReceivedAt=4, PaypalTransactionId=5, EstimatedArrival=6, ID=7
 
-  // Build list of deposit amounts for matching
-  const depositAmounts = bankDeposits.map(d => d.amount);
+  // Build list of deposit amounts for matching (round to 2 decimals to avoid float issues)
+  const depositAmounts = bankDeposits.map(d => Math.round((parseFloat(d.amount) || 0) * 100) / 100);
+  Logger.log('matchBankDeposits: ' + bankDeposits.length + ' deposits, amounts: ' + JSON.stringify(depositAmounts));
 
   for (let i = 1; i < data.length; i++) {
     if (data[i][1] !== 'paypal_transfer') continue;
 
-    const transferAmount = parseFloat(data[i][3]) || 0;
+    const transferAmount = Math.round((parseFloat(data[i][3]) || 0) * 100) / 100;
     const estimatedArrival = data[i][6] ? new Date(data[i][6]) : null;
+
+    Logger.log('matchBankDeposits: checking PayPal $' + transferAmount + ' est:' + (estimatedArrival ? estimatedArrival.toISOString() : 'none') + ' future:' + (estimatedArrival && now < estimatedArrival));
 
     // Only match transfers still "in progress" (estimated arrival in the future)
     if (!estimatedArrival || now >= estimatedArrival) continue;
@@ -598,7 +604,8 @@ function matchBankDepositsToTransfers(emailSheet, bankDeposits) {
     if (matchIdx !== -1) {
       // Update EstimatedArrival to the deposit date (in the past) so pipeline sees it as "In Bank"
       const depositDate = bankDeposits[matchIdx].receivedAt;
-      emailSheet.getRange(i + 1, 7).setValue(depositDate); // Column 7 = EstimatedArrival (1-indexed)
+      Logger.log('matchBankDeposits: MATCHED PayPal $' + transferAmount + ' -> deposit date ' + depositDate);
+      emailSheet.getRange(i + 1, 7).setValue(depositDate instanceof Date ? depositDate.toISOString() : depositDate); // Column 7 = EstimatedArrival (1-indexed)
 
       // Remove matched deposit so it doesn't match again
       depositAmounts.splice(matchIdx, 1);
