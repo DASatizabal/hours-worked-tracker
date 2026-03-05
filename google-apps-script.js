@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.10
+ * VERSION: 2.0.11
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -419,7 +419,15 @@ function scanEmails(userEmail) {
     // When a deposit amount matches a transferring PayPal amount,
     // update the PayPal transfer's EstimatedArrival to the deposit date
     // so the pipeline immediately moves it to "In Bank"
+    // Include ALL bank deposits (newly scanned + already in sheet) so manual entries get matched too
     var allBankDeposits = chaseDeposits.concat(sccuDeposits);
+    var freshData = emailSheet.getDataRange().getValues();
+    for (var i = 1; i < freshData.length; i++) {
+      var src = freshData[i][1];
+      if (src === 'chase_deposit' || src === 'sccu_deposit') {
+        allBankDeposits.push({ amount: parseFloat(freshData[i][3]) || 0, receivedAt: freshData[i][4] });
+      }
+    }
     matchBankDepositsToTransfers(emailSheet, allBankDeposits);
 
   } catch (error) {
