@@ -241,11 +241,13 @@ function scanEmails(userEmail) {
     // Tag all records with the caller's email for multi-user support
     // When called from a time trigger, userEmail is an event object — fall back to Session API
     var deployerEmail = '';
+    Logger.log('scanEmails called with userEmail: ' + JSON.stringify(userEmail) + ' type: ' + typeof userEmail);
     if (typeof userEmail === 'string' && userEmail.indexOf('@') > -1) {
       deployerEmail = userEmail;
     } else {
       try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) {}
     }
+    Logger.log('deployerEmail resolved to: ' + deployerEmail);
     // Scan DA payout emails (last 30 days) - money moved to PayPal
     const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
@@ -285,7 +287,7 @@ function scanEmails(userEmail) {
     });
 
     // Scan Chase deposit emails (David only) - money confirmed in bank
-    const chaseDeposits = [];
+    let chaseDeposits = [];
     if (deployerEmail.toLowerCase() === 'dasatizabal@gmail.com') {
       const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
       Logger.log('Chase threads found: ' + chaseThreads.length);
@@ -308,7 +310,7 @@ function scanEmails(userEmail) {
     }
 
     // Scan SCCU deposit emails (Lisa only) - money confirmed in bank
-    const sccuDeposits = [];
+    let sccuDeposits = [];
     if (deployerEmail.toLowerCase() === 'lisasatizabal@gmail.com') {
       const sccuThreads = GmailApp.search('from:payments@sccu.com subject:"We deposited your payment" newer_than:30d', 0, 50);
       Logger.log('SCCU threads found: ' + sccuThreads.length);
