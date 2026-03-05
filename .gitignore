@@ -3,3 +3,7 @@ tools/.env
 tools/.env.lisa
 tools/da_html_exports/
 tools/*.bat
+tools/__pycache__/
+tools/logs/
+tools/*.png
+NDH6SA~M
