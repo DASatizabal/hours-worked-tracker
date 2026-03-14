@@ -1416,8 +1416,7 @@ const App = {
         this.showToast('Scanning emails...', 'info');
         try {
             const url = SheetsAPI.getActiveAppsScriptUrl();
-            const userEmail = SheetsAPI._getCurrentUserEmail();
-            const response = await fetch(url + '?action=scanEmails&userEmail=' + encodeURIComponent(userEmail));
+            const response = await fetch(url + '?action=scanEmails');
             const data = await response.json();
 
             if (data.error) throw new Error(data.error);

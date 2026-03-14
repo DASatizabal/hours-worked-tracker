@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.12
+ * VERSION: 2.0.13
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -9,6 +9,30 @@
 
 // IMPORTANT: Replace with your actual Sheet ID
 const SHEET_ID = '1y1Jjk056nBMP99c_N1YIeUDG3-kpYqmnctydOnZtcbE';
+
+// IMPORTANT: Set this to the email of the person who deployed this Apps Script.
+// GmailApp can only search the deployer's Gmail, so each family member needs their own deployment.
+// David's deployment: 'dasatizabal@gmail.com'
+// Lisa's deployment: 'lisasatizabal@gmail.com'
+const DEPLOYER_EMAIL = 'dasatizabal@gmail.com';
+
+// Family member config: maps each user to their bank type and deposit search query
+const FAMILY_MEMBERS = {
+  'dasatizabal@gmail.com': {
+    bank: 'chase',
+    bankSource: 'chase_deposit',
+    bankSearch: 'from:no.reply.alerts@chase.com subject:"deposit" newer_than:30d',
+    bankIdField: 'chaseMessageId',
+    bankDedupSuffix: '_chase'
+  },
+  'lisasatizabal@gmail.com': {
+    bank: 'sccu',
+    bankSource: 'sccu_deposit',
+    bankSearch: 'from:payments@sccu.com subject:"We deposited your payment" newer_than:30d',
+    bankIdField: 'confirmationNumber',
+    bankDedupSuffix: '_sccu'
+  }
+};
 
 // Tab configurations: column headers for each tab
 // Tabs with user-scoped data have UserEmail as first column
@@ -31,7 +55,7 @@ function doGet(e) {
 
     // Email scan action
     if (action === 'scanEmails') {
-      return createResponse(scanEmails(e.parameter.userEmail || ''));
+      return createResponse(scanEmails());
     }
 
     // Dedup: flag or delete duplicate WorkSessions
@@ -234,108 +258,21 @@ function upsertSetting(key, value) {
 
 // ============ Email Scanning ============
 
-function scanEmails(userEmail) {
-  const results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, sccuDeposits: 0, newRecords: 0, errors: [] };
+function scanEmails() {
+  var deployerEmail = DEPLOYER_EMAIL.toLowerCase();
+  var memberConfig = FAMILY_MEMBERS[deployerEmail];
+  var results = { daPayouts: 0, paypalTransfers: 0, chaseDeposits: 0, sccuDeposits: 0, newRecords: 0, errors: [] };
+
+  Logger.log('scanEmails: deployer=' + deployerEmail + ' bank=' + (memberConfig ? memberConfig.bank : 'unknown'));
+
+  if (!memberConfig) {
+    results.errors.push('Unknown deployer: ' + deployerEmail + '. Set DEPLOYER_EMAIL at top of script.');
+    return { results };
+  }
 
   try {
-    // Tag all records with the caller's email for multi-user support
-    // When called from a time trigger, userEmail is an event object — fall back to Session API
-    var deployerEmail = '';
-    Logger.log('scanEmails called with userEmail: ' + JSON.stringify(userEmail) + ' type: ' + typeof userEmail);
-    if (typeof userEmail === 'string' && userEmail.indexOf('@') > -1) {
-      deployerEmail = userEmail;
-    } else {
-      try { deployerEmail = Session.getEffectiveUser().getEmail() || ''; } catch(e) {}
-    }
-    Logger.log('deployerEmail resolved to: ' + deployerEmail);
-    // Scan DA payout emails (last 30 days) - money moved to PayPal
-    const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:payout newer_than:30d', 0, 50);
-    Logger.log('DA threads found: ' + daThreads.length);
-    const daPayouts = [];
-
-    daThreads.forEach(thread => {
-      thread.getMessages().forEach(msg => {
-        try {
-          const parsed = parseDAPayoutEmail(msg);
-          if (parsed) {
-            daPayouts.push(parsed);
-            results.daPayouts++;
-          }
-        } catch (err) {
-          results.errors.push('DA parse error: ' + err.message);
-        }
-      });
-    });
-
-    // Scan PayPal transfer emails (last 30 days) - money moving to bank
-    const ppTransferThreads = GmailApp.search('from:service@paypal.com subject:transfer newer_than:30d', 0, 50);
-    Logger.log('PayPal threads found: ' + ppTransferThreads.length);
-    const ppTransfers = [];
-
-    ppTransferThreads.forEach(thread => {
-      thread.getMessages().forEach(msg => {
-        try {
-          const parsed = parsePayPalTransferEmail(msg);
-          if (parsed) {
-            ppTransfers.push(parsed);
-            results.paypalTransfers++;
-          }
-        } catch (err) {
-          results.errors.push('PayPal transfer parse error: ' + err.message);
-        }
-      });
-    });
-
-    // Scan Chase deposit emails (David only) - money confirmed in bank
-    let chaseDeposits = [];
-    if (deployerEmail.toLowerCase() === 'dasatizabal@gmail.com') {
-      const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"deposit" newer_than:30d', 0, 50);
-      Logger.log('Chase threads found: ' + chaseThreads.length);
-
-      chaseThreads.forEach(thread => {
-        thread.getMessages().forEach(msg => {
-          try {
-            const parsed = parseChaseDepositEmail(msg);
-            if (parsed) {
-              chaseDeposits.push(parsed);
-              results.chaseDeposits++;
-            }
-          } catch (err) {
-            results.errors.push('Chase parse error: ' + err.message);
-          }
-        });
-      });
-    } else {
-      Logger.log('Skipping Chase scan (not David)');
-    }
-
-    // Scan SCCU deposit emails (Lisa only) - money confirmed in bank
-    let sccuDeposits = [];
-    if (deployerEmail.toLowerCase() === 'lisasatizabal@gmail.com') {
-      const sccuThreads = GmailApp.search('from:payments@sccu.com subject:"We deposited your payment" newer_than:30d', 0, 50);
-      Logger.log('SCCU threads found: ' + sccuThreads.length);
-
-    sccuThreads.forEach(thread => {
-      thread.getMessages().forEach(msg => {
-        try {
-          const parsed = parseSCCUDepositEmail(msg);
-          if (parsed) {
-            sccuDeposits.push(parsed);
-            results.sccuDeposits++;
-          }
-        } catch (err) {
-          results.errors.push('SCCU parse error: ' + err.message);
-        }
-      });
-    });
-    } else {
-      Logger.log('Skipping SCCU scan (not Lisa)');
-    }
-
-    // Save to EmailPayouts tab
-    const sheet = SpreadsheetApp.openById(SHEET_ID);
-    const emailSheet = sheet.getSheetByName('EmailPayouts');
-
+    var sheet = SpreadsheetApp.openById(SHEET_ID);
+    var emailSheet = sheet.getSheetByName('EmailPayouts');
     if (!emailSheet) {
       results.errors.push('Missing EmailPayouts tab');
       var props = PropertiesService.getScriptProperties();
@@ -344,96 +281,151 @@ function scanEmails(userEmail) {
       return { results };
     }
 
-    // Get existing email payouts to avoid duplicates
-    const existingEmails = getExistingEmailPayouts(emailSheet);
+    var existingEmails = getExistingEmailPayouts(emailSheet);
 
-    // Save DA payouts: UserEmail, Source, DAPaymentId, Amount, ReceivedAt, PaypalTransactionId, EstimatedArrival, ID
-    daPayouts.forEach(dp => {
+    // ---- Step 1: Scan & save DA payout emails (source of truth for the pipeline) ----
+    var daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:payout newer_than:30d', 0, 50);
+    Logger.log('DA threads found: ' + daThreads.length);
+    var daPayouts = [];
+    daThreads.forEach(function(thread) {
+      thread.getMessages().forEach(function(msg) {
+        try {
+          var parsed = parseDAPayoutEmail(msg);
+          if (parsed) { daPayouts.push(parsed); results.daPayouts++; }
+        } catch (err) { results.errors.push('DA parse error: ' + err.message); }
+      });
+    });
+
+    // Save DA payouts (attributed to deployer)
+    daPayouts.forEach(function(dp) {
       if (!existingEmails.has(dp.daPaymentId + '_da')) {
-        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        var id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         emailSheet.appendRow([deployerEmail, 'dataannotation', dp.daPaymentId, dp.amount, dp.receivedAt, '', '', id]);
         existingEmails.set(dp.daPaymentId + '_da', id);
         results.newRecords++;
       }
     });
 
-    // Save PayPal transfer records
-    ppTransfers.forEach(pt => {
+    // ---- Step 2: Scan PayPal transfers, filter to only DA-matching amounts ----
+    var ppThreads = GmailApp.search('from:service@paypal.com subject:transfer newer_than:30d', 0, 50);
+    Logger.log('PayPal threads found: ' + ppThreads.length);
+    var ppTransfers = [];
+    ppThreads.forEach(function(thread) {
+      thread.getMessages().forEach(function(msg) {
+        try {
+          var parsed = parsePayPalTransferEmail(msg);
+          if (parsed) { ppTransfers.push(parsed); results.paypalTransfers++; }
+        } catch (err) { results.errors.push('PayPal parse error: ' + err.message); }
+      });
+    });
+
+    // Build pool of DA payout amounts for this deployer (existing + just saved)
+    var freshData = emailSheet.getDataRange().getValues();
+    var daAmountPool = [];
+    for (var i = 1; i < freshData.length; i++) {
+      if (freshData[i][0].toString().toLowerCase() === deployerEmail &&
+          freshData[i][1] === 'dataannotation') {
+        daAmountPool.push(Math.round((parseFloat(freshData[i][3]) || 0) * 100) / 100);
+      }
+    }
+    // Consume DA amounts already matched to existing PayPal transfers
+    for (var i = 1; i < freshData.length; i++) {
+      if (freshData[i][0].toString().toLowerCase() === deployerEmail &&
+          freshData[i][1] === 'paypal_transfer') {
+        var existingPpAmt = Math.round((parseFloat(freshData[i][3]) || 0) * 100) / 100;
+        var matchIdx = daAmountPool.indexOf(existingPpAmt);
+        if (matchIdx !== -1) daAmountPool.splice(matchIdx, 1);
+      }
+    }
+    // Filter: only keep PayPal transfers matching an unmatched DA payout amount
+    ppTransfers = ppTransfers.filter(function(pt) {
+      var amt = Math.round(pt.amount * 100) / 100;
+      var idx = daAmountPool.indexOf(amt);
+      if (idx !== -1) { daAmountPool.splice(idx, 1); return true; }
+      Logger.log('Skipping PayPal transfer $' + pt.amount + ' — no matching DA payout');
+      return false;
+    });
+
+    // Save PayPal transfers (attributed to deployer)
+    ppTransfers.forEach(function(pt) {
       if (!existingEmails.has(pt.paypalTransactionId + '_pptx')) {
-        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        var id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         emailSheet.appendRow([deployerEmail, 'paypal_transfer', '', pt.amount, pt.receivedAt, pt.paypalTransactionId, pt.estimatedArrival || '', id]);
         existingEmails.set(pt.paypalTransactionId + '_pptx', id);
         results.newRecords++;
       }
     });
 
-    // Filter bank deposits: only keep those matching a PayPal transfer amount.
-    // This prevents non-DA deposits (salary, etc.) from polluting the pipeline.
-    var availablePaypalAmounts = [];
+    // ---- Step 3: Scan bank deposits, filter to only PayPal-matching amounts ----
+    var bankDeposits = [];
+    var bankThreads = GmailApp.search(memberConfig.bankSearch, 0, 50);
+    Logger.log(memberConfig.bank + ' threads found: ' + bankThreads.length);
+    var parseFn = memberConfig.bank === 'chase' ? parseChaseDepositEmail : parseSCCUDepositEmail;
+    bankThreads.forEach(function(thread) {
+      thread.getMessages().forEach(function(msg) {
+        try {
+          var parsed = parseFn(msg);
+          if (parsed) {
+            bankDeposits.push(parsed);
+            if (memberConfig.bank === 'chase') results.chaseDeposits++;
+            else results.sccuDeposits++;
+          }
+        } catch (err) { results.errors.push(memberConfig.bank + ' parse error: ' + err.message); }
+      });
+    });
+
+    // Build pool of PayPal transfer amounts for this deployer (scoped to deployer's records)
+    var freshData2 = emailSheet.getDataRange().getValues();
+    var ppAmountPool = [];
     var existingBankAmounts = [];
-    var sheetData = emailSheet.getDataRange().getValues();
-    for (var i = 1; i < sheetData.length; i++) {
-      var rowSource = sheetData[i][1];
-      var rowAmount = parseFloat(sheetData[i][3]) || 0;
-      if (rowSource === 'paypal_transfer') availablePaypalAmounts.push(rowAmount);
+    for (var i = 1; i < freshData2.length; i++) {
+      if (freshData2[i][0].toString().toLowerCase() !== deployerEmail) continue;
+      var rowSource = freshData2[i][1];
+      var rowAmount = Math.round((parseFloat(freshData2[i][3]) || 0) * 100) / 100;
+      if (rowSource === 'paypal_transfer') ppAmountPool.push(rowAmount);
       if (rowSource === 'chase_deposit' || rowSource === 'sccu_deposit') existingBankAmounts.push(rowAmount);
     }
     // Consume PayPal amounts already matched to existing bank deposits
     existingBankAmounts.forEach(function(amt) {
-      var idx = availablePaypalAmounts.indexOf(amt);
-      if (idx !== -1) availablePaypalAmounts.splice(idx, 1);
+      var idx = ppAmountPool.indexOf(amt);
+      if (idx !== -1) ppAmountPool.splice(idx, 1);
     });
-    // Only keep new bank deposits that match an unmatched PayPal transfer
-    chaseDeposits = chaseDeposits.filter(function(cd) {
-      var idx = availablePaypalAmounts.indexOf(cd.amount);
-      if (idx !== -1) { availablePaypalAmounts.splice(idx, 1); return true; }
-      Logger.log('Skipping Chase deposit $' + cd.amount + ' — no matching PayPal transfer');
-      return false;
-    });
-    sccuDeposits = sccuDeposits.filter(function(sd) {
-      var idx = availablePaypalAmounts.indexOf(sd.amount);
-      if (idx !== -1) { availablePaypalAmounts.splice(idx, 1); return true; }
-      Logger.log('Skipping SCCU deposit $' + sd.amount + ' — no matching PayPal transfer');
+    // Filter: only keep bank deposits matching an unmatched PayPal transfer amount
+    bankDeposits = bankDeposits.filter(function(bd) {
+      var amt = Math.round(bd.amount * 100) / 100;
+      var idx = ppAmountPool.indexOf(amt);
+      if (idx !== -1) { ppAmountPool.splice(idx, 1); return true; }
+      Logger.log('Skipping ' + memberConfig.bank + ' deposit $' + bd.amount + ' — no matching PayPal transfer');
       return false;
     });
 
-    // Save Chase deposit records (only PayPal-matched)
-    chaseDeposits.forEach(cd => {
-      if (!existingEmails.has(cd.chaseMessageId + '_chase')) {
-        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow([deployerEmail, 'chase_deposit', cd.chaseMessageId, cd.amount, cd.receivedAt, '', '', id]);
-        existingEmails.set(cd.chaseMessageId + '_chase', id);
+    // Save bank deposits (attributed to deployer)
+    bankDeposits.forEach(function(bd) {
+      var dedupId = bd[memberConfig.bankIdField];
+      var dedupKey = dedupId + memberConfig.bankDedupSuffix;
+      if (!existingEmails.has(dedupKey)) {
+        var id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        emailSheet.appendRow([deployerEmail, memberConfig.bankSource, dedupId, bd.amount, bd.receivedAt, '', '', id]);
+        existingEmails.set(dedupKey, id);
         results.newRecords++;
       }
     });
 
-    // Save SCCU deposit records (only PayPal-matched)
-    sccuDeposits.forEach(sd => {
-      if (!existingEmails.has(sd.confirmationNumber + '_sccu')) {
-        const id = 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        emailSheet.appendRow([deployerEmail, 'sccu_deposit', sd.confirmationNumber, sd.amount, sd.receivedAt, '', '', id]);
-        existingEmails.set(sd.confirmationNumber + '_sccu', id);
-        results.newRecords++;
-      }
-    });
-
-    // Match bank deposits to in-progress PayPal transfers
-    // When a deposit amount matches a transferring PayPal amount,
-    // update the PayPal transfer's EstimatedArrival to the deposit date
-    // so the pipeline immediately moves it to "In Bank"
-    // Include ALL bank deposits (newly scanned + already in sheet) so manual entries get matched too
-    var allBankDeposits = chaseDeposits.concat(sccuDeposits);
-    var freshData = emailSheet.getDataRange().getValues();
-    for (var i = 1; i < freshData.length; i++) {
-      var src = freshData[i][1];
+    // ---- Step 4: Match bank deposits to in-progress PayPal transfers ----
+    // Collect ALL bank deposits for this deployer (newly scanned + existing in sheet)
+    var allBankDeposits = bankDeposits.slice();
+    var latestData = emailSheet.getDataRange().getValues();
+    for (var i = 1; i < latestData.length; i++) {
+      if (latestData[i][0].toString().toLowerCase() !== deployerEmail) continue;
+      var src = latestData[i][1];
       if (src === 'chase_deposit' || src === 'sccu_deposit') {
-        allBankDeposits.push({ amount: parseFloat(freshData[i][3]) || 0, receivedAt: freshData[i][4] });
+        allBankDeposits.push({ amount: parseFloat(latestData[i][3]) || 0, receivedAt: latestData[i][4] });
       }
     }
-    matchBankDepositsToTransfers(emailSheet, allBankDeposits);
+    matchBankDepositsToTransfers(emailSheet, allBankDeposits, deployerEmail);
 
   } catch (error) {
-    Logger.log('SCAN ERROR: ' + error.message);
+    Logger.log('SCAN ERROR: ' + error.message + '\n' + error.stack);
     results.errors.push('Scan error: ' + error.message);
   }
 
@@ -576,38 +568,38 @@ function parseSCCUDepositEmail(msg) {
   };
 }
 
-function matchBankDepositsToTransfers(emailSheet, bankDeposits) {
+function matchBankDepositsToTransfers(emailSheet, bankDeposits, deployerEmail) {
   if (bankDeposits.length === 0) {
     Logger.log('matchBankDeposits: no bank deposits to match');
     return;
   }
 
-  const now = new Date();
-  const data = emailSheet.getDataRange().getValues();
-  // Column indices (with UserEmail): UserEmail=0, Source=1, DAPaymentId=2, Amount=3, ReceivedAt=4, PaypalTransactionId=5, EstimatedArrival=6, ID=7
+  var now = new Date();
+  var data = emailSheet.getDataRange().getValues();
+  // Column indices: UserEmail=0, Source=1, DAPaymentId=2, Amount=3, ReceivedAt=4, PaypalTransactionId=5, EstimatedArrival=6, ID=7
 
   // Build list of deposit amounts for matching (round to 2 decimals to avoid float issues)
-  const depositAmounts = bankDeposits.map(d => Math.round((parseFloat(d.amount) || 0) * 100) / 100);
+  var depositAmounts = bankDeposits.map(function(d) { return Math.round((parseFloat(d.amount) || 0) * 100) / 100; });
   Logger.log('matchBankDeposits: ' + bankDeposits.length + ' deposits, amounts: ' + JSON.stringify(depositAmounts));
 
-  for (let i = 1; i < data.length; i++) {
+  for (var i = 1; i < data.length; i++) {
+    // Only match this deployer's PayPal transfers
+    if (data[i][0].toString().toLowerCase() !== deployerEmail) continue;
     if (data[i][1] !== 'paypal_transfer') continue;
 
-    const transferAmount = Math.round((parseFloat(data[i][3]) || 0) * 100) / 100;
-    const estimatedArrival = data[i][6] ? new Date(data[i][6]) : null;
-
-    Logger.log('matchBankDeposits: checking PayPal $' + transferAmount + ' est:' + (estimatedArrival ? estimatedArrival.toISOString() : 'none') + ' future:' + (estimatedArrival && now < estimatedArrival));
+    var transferAmount = Math.round((parseFloat(data[i][3]) || 0) * 100) / 100;
+    var estimatedArrival = data[i][6] ? new Date(data[i][6]) : null;
 
     // Only match transfers still "in progress" (estimated arrival in the future)
     if (!estimatedArrival || now >= estimatedArrival) continue;
 
     // Check if any bank deposit matches this transfer amount
-    const matchIdx = depositAmounts.indexOf(transferAmount);
+    var matchIdx = depositAmounts.indexOf(transferAmount);
     if (matchIdx !== -1) {
       // Update EstimatedArrival to the deposit date (in the past) so pipeline sees it as "In Bank"
-      const depositDate = bankDeposits[matchIdx].receivedAt;
+      var depositDate = bankDeposits[matchIdx].receivedAt;
       Logger.log('matchBankDeposits: MATCHED PayPal $' + transferAmount + ' -> deposit date ' + depositDate);
-      emailSheet.getRange(i + 1, 7).setValue(depositDate instanceof Date ? depositDate.toISOString() : depositDate); // Column 7 = EstimatedArrival (1-indexed)
+      emailSheet.getRange(i + 1, 7).setValue(depositDate instanceof Date ? depositDate.toISOString() : depositDate);
 
       // Remove matched deposit so it doesn't match again
       depositAmounts.splice(matchIdx, 1);
