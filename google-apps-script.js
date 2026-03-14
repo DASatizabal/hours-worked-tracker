@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.11
+ * VERSION: 2.0.12
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -249,7 +249,7 @@ function scanEmails(userEmail) {
     }
     Logger.log('deployerEmail resolved to: ' + deployerEmail);
     // Scan DA payout emails (last 30 days) - money moved to PayPal
-    const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:"New Payout" newer_than:30d', 0, 50);
+    const daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:payout newer_than:30d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
     const daPayouts = [];
 
@@ -268,7 +268,7 @@ function scanEmails(userEmail) {
     });
 
     // Scan PayPal transfer emails (last 30 days) - money moving to bank
-    const ppTransferThreads = GmailApp.search('from:service@paypal.com subject:"Your transfer request is processing" newer_than:30d', 0, 50);
+    const ppTransferThreads = GmailApp.search('from:service@paypal.com subject:transfer newer_than:30d', 0, 50);
     Logger.log('PayPal threads found: ' + ppTransferThreads.length);
     const ppTransfers = [];
 
@@ -289,7 +289,7 @@ function scanEmails(userEmail) {
     // Scan Chase deposit emails (David only) - money confirmed in bank
     let chaseDeposits = [];
     if (deployerEmail.toLowerCase() === 'dasatizabal@gmail.com') {
-      const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"direct deposit posted" newer_than:30d', 0, 50);
+      const chaseThreads = GmailApp.search('from:no.reply.alerts@chase.com subject:"deposit" newer_than:30d', 0, 50);
       Logger.log('Chase threads found: ' + chaseThreads.length);
 
       chaseThreads.forEach(thread => {

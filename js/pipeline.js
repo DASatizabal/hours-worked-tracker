@@ -252,7 +252,7 @@ const Pipeline = {
 
         // Show recent email payouts as detail items
         const recentEmails = emailPayouts
-            .filter(e => e.source === 'dataannotation' || e.source === 'paypal_transfer')
+            .filter(e => e.source === 'dataannotation' || e.source === 'paypal_transfer' || e.source === 'chase_deposit' || e.source === 'sccu_deposit')
             .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
             .slice(0, 10);
 
