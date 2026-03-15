@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.13
+ * VERSION: 2.0.14
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -21,14 +21,14 @@ const FAMILY_MEMBERS = {
   'dasatizabal@gmail.com': {
     bank: 'chase',
     bankSource: 'chase_deposit',
-    bankSearch: 'from:no.reply.alerts@chase.com subject:"deposit" newer_than:30d',
+    bankSearch: 'from:no.reply.alerts@chase.com subject:"deposit" newer_than:90d',
     bankIdField: 'chaseMessageId',
     bankDedupSuffix: '_chase'
   },
   'lisasatizabal@gmail.com': {
     bank: 'sccu',
     bankSource: 'sccu_deposit',
-    bankSearch: 'from:payments@sccu.com subject:"We deposited your payment" newer_than:30d',
+    bankSearch: 'from:payments@sccu.com subject:"We deposited your payment" newer_than:90d',
     bankIdField: 'confirmationNumber',
     bankDedupSuffix: '_sccu'
   }
@@ -284,7 +284,7 @@ function scanEmails() {
     var existingEmails = getExistingEmailPayouts(emailSheet);
 
     // ---- Step 1: Scan & save DA payout emails (source of truth for the pipeline) ----
-    var daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:payout newer_than:30d', 0, 50);
+    var daThreads = GmailApp.search('from:noreply@mail.dataannotation.tech subject:payout newer_than:90d', 0, 50);
     Logger.log('DA threads found: ' + daThreads.length);
     var daPayouts = [];
     daThreads.forEach(function(thread) {
@@ -307,7 +307,7 @@ function scanEmails() {
     });
 
     // ---- Step 2: Scan PayPal transfers, filter to only DA-matching amounts ----
-    var ppThreads = GmailApp.search('from:service@paypal.com subject:transfer newer_than:30d', 0, 50);
+    var ppThreads = GmailApp.search('from:service@paypal.com subject:transfer newer_than:90d', 0, 50);
     Logger.log('PayPal threads found: ' + ppThreads.length);
     var ppTransfers = [];
     ppThreads.forEach(function(thread) {

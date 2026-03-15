@@ -1,6 +1,6 @@
 // Configuration for Hours Worked Tracker
 
-const APP_VERSION = '2.0.13';
+const APP_VERSION = '2.0.14';
 
 // Auth roles
 const AUTH_ROLES = {
@@ -47,6 +47,9 @@ const CONFIG = {
     TASK_PAYOUT_HOURS: 72,      // 3 days
     PAYPAL_TRANSFER_BUSINESS_DAYS: 3,
     DEFAULT_PAYOUT_WEEKDAY: 2,  // 0=Sunday, 1=Monday, 2=Tuesday (default), etc.
+    DEFAULT_AUTO_PAYOUT_ENABLED: false,
+    DEFAULT_PAYOUT_HOUR: 12,
+    DEFAULT_PAYOUT_AMPM: 'PM',
 
     // Polling interval for automatic scan detection (milliseconds)
     POLL_INTERVAL_MS: 5 * 60 * 1000,  // 5 minutes

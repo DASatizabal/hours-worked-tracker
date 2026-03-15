@@ -108,6 +108,36 @@ def get_payday_from_sheets():
     except Exception as e:
         log.warning(f"Could not read payday from Sheets: {e}")
 
+
+def get_auto_payout_settings():
+    """Read auto-payout settings from Google Sheets via Apps Script."""
+    defaults = {
+        'autoPayoutEnabled': False,
+        'payoutHour': 12,
+        'payoutAmPm': 'PM',
+    }
+    if not APPS_SCRIPT_URL:
+        log.warning("APPS_SCRIPT_URL not set, using default auto-payout settings")
+        return defaults
+
+    try:
+        url = APPS_SCRIPT_URL + '?tab=Settings'
+        response = requests.get(url, timeout=15, allow_redirects=True)
+        data = response.json()
+        records = data.get('records', [])
+        settings = {}
+        for r in records:
+            settings[r.get('key')] = r.get('value')
+
+        return {
+            'autoPayoutEnabled': settings.get('autoPayoutEnabled', 'false').lower() == 'true',
+            'payoutHour': int(settings.get('payoutHour', 12)),
+            'payoutAmPm': settings.get('payoutAmPm', 'PM'),
+        }
+    except Exception as e:
+        log.warning(f"Could not read auto-payout settings from Sheets: {e}")
+        return defaults
+
     log.info(f"No payday setting found, using default: {DAY_NAMES[DEFAULT_PAYOUT_WEEKDAY]}")
     return DEFAULT_PAYOUT_WEEKDAY
 
@@ -844,6 +874,14 @@ def main():
 
     # Payday check only applies to --get-paid (scraping should run daily)
     if args.get_paid and not args.force:
+        # Auto-payout check: when --auto, verify auto-payout is enabled in settings
+        if args.auto:
+            auto_settings = get_auto_payout_settings()
+            if not auto_settings['autoPayoutEnabled']:
+                log.info("Auto-payout is disabled in settings. Exiting. "
+                         "(Enable in app Settings or use --force to override)")
+                sys.exit(0)
+
         payday = get_payday_from_sheets()
         if not is_today_payday(payday):
             log.info(f"Today is {DAY_NAMES[(datetime.now().weekday() + 1) % 7]}, "

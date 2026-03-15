@@ -123,8 +123,8 @@ function getPayoutCountdown(session, isPaidOut) {
     };
 }
 
-// Calculate the next occurrence of a weekday at noon
-function getNextPayoutDeadline(weekday) {
+// Calculate the next occurrence of a weekday at the given hour
+function getNextPayoutDeadline(weekday, hour24 = 12) {
     const now = new Date();
     const currentDay = now.getDay();
     const currentHour = now.getHours();
@@ -132,14 +132,14 @@ function getNextPayoutDeadline(weekday) {
     // Calculate days until target weekday
     let daysUntil = weekday - currentDay;
 
-    // If target day is today but it's past noon, or target day has passed this week
-    if (daysUntil < 0 || (daysUntil === 0 && currentHour >= 12)) {
+    // If target day is today but it's past the payout hour, or target day has passed this week
+    if (daysUntil < 0 || (daysUntil === 0 && currentHour >= hour24)) {
         daysUntil += 7;
     }
 
     const deadline = new Date(now);
     deadline.setDate(deadline.getDate() + daysUntil);
-    deadline.setHours(12, 0, 0, 0); // Set to noon
+    deadline.setHours(hour24, 0, 0, 0);
 
     return deadline;
 }
@@ -548,14 +548,15 @@ const App = {
 
         // Est. Next Paycheck calculation
         const payoutWeekday = this.getPayoutWeekday();
-        const deadline = getNextPayoutDeadline(payoutWeekday);
+        const payoutHour24 = this.getPayoutHour24();
+        const deadline = getNextPayoutDeadline(payoutWeekday, payoutHour24);
         const nextPaycheckGross = calculateNextPaycheck(sessions, deadline, emailPayouts);
         const nextPaycheckNet = TaxCalc.calcNet(nextPaycheckGross);
 
         document.getElementById('next-paycheck-gross').textContent = formatCurrency(nextPaycheckGross);
         document.getElementById('next-paycheck-net').textContent = 'Net: ' + formatCurrency(nextPaycheckNet);
         const paycheckLabel = document.getElementById('paycheck-card-label');
-        if (paycheckLabel) paycheckLabel.textContent = `Est. Next Paycheck (${getWeekdayShort(payoutWeekday)} noon)`;
+        if (paycheckLabel) paycheckLabel.textContent = `Est. Next Paycheck (${getWeekdayShort(payoutWeekday)} ${this.getPayoutTimeLabel()})`;
 
         // All time stats
         const allTime = TaxCalc.allTimeSummary(sessions);
@@ -1318,6 +1319,9 @@ const App = {
         document.getElementById('settings-project-hours').value = CONFIG.PROJECT_PAYOUT_HOURS;
         document.getElementById('settings-task-hours').value = CONFIG.TASK_PAYOUT_HOURS;
         document.getElementById('settings-payout-weekday').value = this.getPayoutWeekday();
+        document.getElementById('settings-auto-payout').checked = this.isAutoPayoutEnabled();
+        document.getElementById('settings-payout-hour').value = localStorage.getItem('hwt_payout_hour') || CONFIG.DEFAULT_PAYOUT_HOUR;
+        document.getElementById('settings-payout-ampm').value = localStorage.getItem('hwt_payout_ampm') || CONFIG.DEFAULT_PAYOUT_AMPM;
 
         modal.classList.remove('hidden');
         modal.classList.add('flex');
@@ -1330,6 +1334,9 @@ const App = {
         const projectHours = parseInt(document.getElementById('settings-project-hours').value);
         const taskHours = parseInt(document.getElementById('settings-task-hours').value);
         const payoutWeekday = parseInt(document.getElementById('settings-payout-weekday').value);
+        const autoPayoutEnabled = document.getElementById('settings-auto-payout').checked;
+        const payoutHour = parseInt(document.getElementById('settings-payout-hour').value);
+        const payoutAmPm = document.getElementById('settings-payout-ampm').value;
 
         if (sheetsUrl) SheetsAPI.setUserAppsScriptUrl(sheetsUrl);
         if (hourlyRate > 0) localStorage.setItem('hwt_hourly_rate', hourlyRate.toString());
@@ -1339,6 +1346,19 @@ const App = {
         if (payoutWeekday >= 0 && payoutWeekday <= 6) {
             localStorage.setItem('hwt_payout_weekday', payoutWeekday.toString());
             SheetsAPI.saveSettingByKey('payoutWeekday', payoutWeekday.toString());
+        }
+
+        localStorage.setItem('hwt_auto_payout_enabled', autoPayoutEnabled.toString());
+        SheetsAPI.saveSettingByKey('autoPayoutEnabled', autoPayoutEnabled.toString());
+
+        if (payoutHour >= 1 && payoutHour <= 12) {
+            localStorage.setItem('hwt_payout_hour', payoutHour.toString());
+            SheetsAPI.saveSettingByKey('payoutHour', payoutHour.toString());
+        }
+
+        if (payoutAmPm === 'AM' || payoutAmPm === 'PM') {
+            localStorage.setItem('hwt_payout_ampm', payoutAmPm);
+            SheetsAPI.saveSettingByKey('payoutAmPm', payoutAmPm);
         }
 
         this.showToast('Settings saved', 'success');
@@ -1359,6 +1379,24 @@ const App = {
     getPayoutWeekday() {
         const saved = localStorage.getItem('hwt_payout_weekday');
         return saved !== null ? parseInt(saved) : CONFIG.DEFAULT_PAYOUT_WEEKDAY;
+    },
+
+    getPayoutHour24() {
+        const hour = parseInt(localStorage.getItem('hwt_payout_hour')) || CONFIG.DEFAULT_PAYOUT_HOUR;
+        const ampm = localStorage.getItem('hwt_payout_ampm') || CONFIG.DEFAULT_PAYOUT_AMPM;
+        if (ampm === 'AM') return hour === 12 ? 0 : hour;
+        return hour === 12 ? 12 : hour + 12;
+    },
+
+    getPayoutTimeLabel() {
+        const hour = parseInt(localStorage.getItem('hwt_payout_hour')) || CONFIG.DEFAULT_PAYOUT_HOUR;
+        const ampm = localStorage.getItem('hwt_payout_ampm') || CONFIG.DEFAULT_PAYOUT_AMPM;
+        return `${hour} ${ampm}`;
+    },
+
+    isAutoPayoutEnabled() {
+        const saved = localStorage.getItem('hwt_auto_payout_enabled');
+        return saved !== null ? saved === 'true' : CONFIG.DEFAULT_AUTO_PAYOUT_ENABLED;
     },
 
     // ============ Pipeline Details Toggle ============
