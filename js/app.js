@@ -49,7 +49,8 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
         let remaining = daTotals[email] || 0;
         for (const s of byUser[email]) {
             const earnings = parseFloat(s.earnings) || 0;
-            if (remaining >= earnings) {
+            // Use penny tolerance to avoid floating point drift after many subtractions
+            if (remaining >= earnings - 0.01) {
                 remaining -= earnings;
                 paidIds.add(s.id);
             } else {

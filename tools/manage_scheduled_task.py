@@ -68,7 +68,7 @@ def get_settings_from_sheets(apps_script_url):
             settings[r.get('key')] = r.get('value')
 
         return {
-            'autoPayoutEnabled': settings.get('autoPayoutEnabled', 'false').lower() == 'true',
+            'autoPayoutEnabled': str(settings.get('autoPayoutEnabled', 'false')).lower() == 'true',
             'payoutWeekday': int(settings.get('payoutWeekday', 2)),
             'payoutHour': int(settings.get('payoutHour', 12)),
             'payoutAmPm': settings.get('payoutAmPm', 'PM'),

@@ -130,7 +130,7 @@ def get_auto_payout_settings():
             settings[r.get('key')] = r.get('value')
 
         return {
-            'autoPayoutEnabled': settings.get('autoPayoutEnabled', 'false').lower() == 'true',
+            'autoPayoutEnabled': str(settings.get('autoPayoutEnabled', 'false')).lower() == 'true',
             'payoutHour': int(settings.get('payoutHour', 12)),
             'payoutAmPm': settings.get('payoutAmPm', 'PM'),
         }
@@ -524,8 +524,16 @@ def parse_da_html(html):
         is_date_row = 'tw-bg-[#E5D3EB]' in row_class_str or 'tw-border-primary-light-50' in row_class_str
 
         # Check indent level to distinguish headers vs sub-items
-        title_div = row.select_one('[data-column-id="title"] div div')
-        title_div_class = ' '.join(title_div.get('class', [])) if title_div else ''
+        # Find the div carrying the tw-ml-* indent class (may be nested 2-3 levels deep)
+        title_td = row.select_one('[data-column-id="title"]')
+        title_div = None
+        title_div_class = ''
+        if title_td:
+            for d in title_td.select('div'):
+                if any(c.startswith('tw-ml-') for c in d.get('class', [])):
+                    title_div = d
+                    title_div_class = ' '.join(d.get('class', []))
+                    break
         is_sub_item = 'tw-ml-10' in title_div_class
         is_top_level = 'tw-ml-0' in title_div_class and not is_sub_item
 
@@ -533,20 +541,37 @@ def parse_da_html(html):
         title_span = row.select_one('[data-column-id="title"] span')
         title = title_span.get_text(strip=True) if title_span else ''
 
-        # Get amount
-        amount_cell = row.select_one('[data-column-id="amount"] > div')
-        amount_text = amount_cell.get_text(strip=True) if amount_cell else ''
-        try:
-            amount = float(re.sub(r'[$,]', '', amount_text))
-        except (ValueError, TypeError):
-            amount = 0.0
+        # Get amount — new layout puts amount in targeted divs, not the whole cell
+        amount_td = row.select_one('[data-column-id="amount"]')
+        amount = 0.0
+        if amount_td:
+            # Sub-items: amount in .tw-text-sm.tw-text-black-80
+            # Totals: amount in .tw-font-semibold
+            amount_el = (amount_td.select_one('.tw-font-semibold')
+                         or amount_td.select_one('.tw-text-sm.tw-text-black-80'))
+            if amount_el:
+                amount_text = amount_el.get_text(strip=True)
+            else:
+                # Fallback: old layout — direct child div text
+                amount_cell = amount_td.select_one(':scope > div')
+                amount_text = amount_cell.get_text(strip=True) if amount_cell else ''
+            try:
+                amount = float(re.sub(r'[$,]', '', amount_text))
+            except (ValueError, TypeError):
+                amount = 0.0
 
-        # Get time/duration text
+        # Get time/duration text — try old column first, fall back to amount cell
         time_cell = row.select_one('[data-column-id="time"] > div')
-        time_text = time_cell.get_text(strip=True) if time_cell else ''
+        if time_cell:
+            time_text = time_cell.get_text(strip=True)
+        else:
+            duration_el = amount_td.select_one('.tw-text-sm.tw-text-black-60') if amount_td else None
+            time_text = duration_el.get_text(strip=True) if duration_el else ''
 
-        # Get submitted timestamp (epoch ms in datetime attr)
+        # Get submitted timestamp — try old column first, fall back to amount cell
         time_el = row.select_one('[data-column-id="timeAgo"] time[datetime]')
+        if not time_el and amount_td:
+            time_el = amount_td.select_one('time[datetime]')
         submitted_ms = None
         if time_el and time_el.get('datetime'):
             try:

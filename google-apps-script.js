@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.14
+ * VERSION: 2.0.15
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -159,16 +159,18 @@ function addRecord(tab, record) {
 
   const headers = TABS[tab];
 
-  // Dedup guard for WorkSessions: reject if a row with the same UserEmail + Date + Earnings already exists
+  // Dedup guard for WorkSessions: reject if a row with the same UserEmail + Date + Earnings + SubmittedAt already exists
   if (tab === 'WorkSessions' && record.date) {
     var userCol = headers.indexOf('UserEmail');
     var dateCol = headers.indexOf('Date');
     var earnCol = headers.indexOf('Earnings');
+    var subCol = headers.indexOf('SubmittedAt');
     if (dateCol !== -1 && earnCol !== -1) {
       var data = sheet.getDataRange().getValues();
       var newEarnings = parseFloat(record.earnings) || 0;
       var newDate = String(record.date).slice(0, 10);
       var newUserEmail = (record.userEmail || '').toLowerCase();
+      var newSubmittedAt = record.submittedAt ? String(record.submittedAt).slice(0, 19) : '';
       for (var i = 1; i < data.length; i++) {
         // Only check duplicates for the same user
         var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
@@ -176,10 +178,11 @@ function addRecord(tab, record) {
         var rowDate = data[i][dateCol] instanceof Date
           ? data[i][dateCol].toISOString().split('T')[0]
           : String(data[i][dateCol]).slice(0, 10);
-        if (rowDate === newDate &&
-            (parseFloat(data[i][earnCol]) || 0) === newEarnings) {
-          return createResponse({ success: true, duplicate: true, record: record });
-        }
+        if (rowDate !== newDate || (parseFloat(data[i][earnCol]) || 0) !== newEarnings) continue;
+        // Date + Earnings match — check SubmittedAt to distinguish legitimate same-day entries
+        var rowSubmittedAt = subCol !== -1 ? String(data[i][subCol] || '').slice(0, 19) : '';
+        if (newSubmittedAt && rowSubmittedAt && newSubmittedAt !== rowSubmittedAt) continue;
+        return createResponse({ success: true, duplicate: true, record: record });
       }
     }
   }
