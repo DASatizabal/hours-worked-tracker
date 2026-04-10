@@ -608,7 +608,7 @@ const App = {
             <tr class="hover:bg-white/5 transition-colors">
                 <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}${userBadge}</td>
                 <td class="px-4 py-3 text-sm">
-                    <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : 'Task'}</span>
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : s.type === 'referral' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : s.type === 'referral' ? 'Referral' : 'Task'}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-right text-white">${parseFloat(s.duration) > 0 ? parseFloat(s.duration).toFixed(2) + 'h' : '-'}</td>
                 <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">${formatCurrency(s.earnings)}</td>
