@@ -584,6 +584,24 @@ def parse_da_html(html):
             current_project = None
             continue
 
+        # Detect referral badge (blue badge with "referral" text)
+        referral_badge = row.select_one('.tw-bg-blue-600')
+        if referral_badge and referral_badge.get_text(strip=True).lower() == 'referral':
+            if amount > 0:
+                submitted_dt = None
+                if submitted_ms:
+                    submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
+                entries.append({
+                    'type': 'referral',
+                    'amount': round(amount, 2),
+                    'duration': 0,
+                    'durationText': '',
+                    'submittedAt': submitted_dt.isoformat() if submitted_dt else '',
+                    'submittedAtMs': submitted_ms or 0,
+                    'projectName': 'Referral Bonus'
+                })
+            continue
+
         # Project name headers are at tw-ml-5 (or tw-ml-0 without date bg)
         is_project_header = (is_top_level or 'tw-ml-5' in title_div_class) and not is_sub_item
         if is_project_header and title not in ('Task Submission', 'Time Entry'):
@@ -671,6 +689,11 @@ def reconcile_da_entries(da_entries, sessions):
     used_session_ids = set()
 
     for da in da_entries:
+        if not da['submittedAt']:
+            # Entries without timestamps (e.g. referrals) can't be reconciled
+            unmatched.append({'da': da})
+            continue
+
         da_date = datetime.fromisoformat(da['submittedAt'])
 
         best_match = None
@@ -819,14 +842,15 @@ def import_to_sheets(corrections, unmatched):
         da = u['da']
         record_id = f"ws_{int(time.time() * 1000)}_{os.urandom(4).hex()}"
         user_email = DA_USER_EMAIL or DA_EMAIL
+        record_date = da['submittedAt'][:10] if da['submittedAt'] else datetime.now().strftime('%Y-%m-%d')
         record = {
             'id': record_id,
             'userEmail': user_email,
-            'date': da['submittedAt'][:10],
+            'date': record_date,
             'duration': da['duration'],
             'type': da['type'],
             'projectId': da['projectName'],
-            'notes': '',
+            'notes': 'Referral Bonus' if da['type'] == 'referral' else '',
             'hourlyRate': round(da['amount'] / da['duration']) if da['duration'] > 0 else 0,
             'earnings': da['amount'],
             'submittedAt': da['submittedAt']
@@ -933,6 +957,20 @@ def main():
             )
         )
         page = context.new_page()
+
+        # Capture browser console messages and network requests to detect
+        # any auto-payout behavior from DA's frontend JavaScript
+        def on_console(msg):
+            text = msg.text.lower()
+            if any(kw in text for kw in ['payout', 'pay', 'transfer', 'withdraw', 'claim', 'balance']):
+                log.info(f"  [CONSOLE] {msg.type}: {msg.text[:300]}")
+        page.on("console", on_console)
+
+        def on_response(response):
+            url = response.url.lower()
+            if any(kw in url for kw in ['payout', 'pay', 'transfer', 'withdraw', 'claim', 'stripe']):
+                log.info(f"  [NETWORK] {response.status} {response.request.method} {response.url[:200]}")
+        page.on("response", on_response)
 
         try:
             if args.get_paid:
