@@ -24,10 +24,12 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
     const byUser = {};
     sessions.forEach(s => {
         if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
-        const submittedAt = new Date(s.submittedAt);
-        const payoutHours = s.type === 'referral' ? 0 : s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
-        if (now < payoutExpected) return;
+        if (s.type !== 'referral') {
+            const submittedAt = new Date(s.submittedAt);
+            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+            const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+            if (now < payoutExpected) return;
+        }
         const email = (s.userEmail || '').toLowerCase();
         if (!byUser[email]) byUser[email] = [];
         byUser[email].push(s);
@@ -68,9 +70,15 @@ function getPayoutCountdown(session, isPaidOut) {
         return { html: '-', expired: true };
     }
 
+    // Referrals are instantly available — skip countdown
+    if (session.type === 'referral') {
+        const icon = isPaidOut ? '$' : '✓';
+        return { html: `<span class="text-emerald-400">${icon}</span>`, expired: true };
+    }
+
     const now = new Date();
     const submittedAt = new Date(session.submittedAt);
-    const payoutHours = session.type === 'referral' ? 0 : session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
     const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
     const remainingMs = payoutExpected - now;
 
@@ -155,10 +163,17 @@ function calculateNextPaycheck(sessions, deadline, emailPayouts) {
     for (const session of sessions) {
         if (!session.submittedAt) continue;
 
-        const submittedAt = new Date(session.submittedAt);
-        const payoutHours = session.type === 'referral' ? 0 : session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
         const earnings = parseFloat(session.earnings) || 0;
+
+        // Referrals are instantly available
+        if (session.type === 'referral') {
+            availableNow += earnings;
+            continue;
+        }
+
+        const submittedAt = new Date(session.submittedAt);
+        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
         if (now >= payoutExpected) {
             // Already past waiting period
@@ -657,11 +672,12 @@ const App = {
                     // Calculate remaining milliseconds for each
                     const now = new Date();
                     const getRemaining = (s) => {
-                        if (!s.submittedAt) return -Infinity; // No submittedAt goes to end
+                        if (!s.submittedAt) return -Infinity;
+                        if (s.type === 'referral') return -Infinity; // Instantly available
                         const submittedAt = new Date(s.submittedAt);
-                        const payoutHours = s.type === 'referral' ? 0 : s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
                         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
-                        return payoutExpected - now; // Negative means expired
+                        return payoutExpected - now;
                     };
                     const remA = getRemaining(a);
                     const remB = getRemaining(b);

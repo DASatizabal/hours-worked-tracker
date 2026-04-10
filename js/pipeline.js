@@ -107,7 +107,13 @@ const Pipeline = {
                 return;
             }
 
-            const payoutHours = s.type === 'referral' ? 0 : s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+            // Referrals are instantly available
+            if (s.type === 'referral') {
+                sessionsPastWaiting += earnings;
+                return;
+            }
+
+            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
             const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
             if (now < payoutExpected) {
