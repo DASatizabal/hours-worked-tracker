@@ -608,6 +608,7 @@ const App = {
 
         const isFamilyView = SheetsAPI.getViewMode() === 'family';
         const paidOutIds = getPaidOutSessionIds(sessions, this._cachedEmailPayouts);
+        this._paidOutIds = paidOutIds;
         tbody.innerHTML = sorted.map(s => {
             const countdown = getPayoutCountdown(s, paidOutIds.has(s.id));
             const userBadge = isFamilyView && s.userEmail
@@ -669,19 +670,22 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Calculate remaining milliseconds for each
+                    // Sort order (desc): countdown high→low, then ✓ (available), then $ (paid out)
+                    // Paid out = -Infinity, available = -1, pending = positive ms remaining
                     const now = new Date();
+                    const paidOut = this._paidOutIds || new Set();
                     const getRemaining = (s) => {
-                        if (!s.submittedAt) return -Infinity;
-                        if (s.type === 'referral') return -Infinity; // Instantly available
+                        if (paidOut.has(s.id)) return -Infinity; // Paid out goes last
+                        if (!s.submittedAt) return -1; // Available
+                        if (s.type === 'referral') return -1; // Instantly available
                         const submittedAt = new Date(s.submittedAt);
                         const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
                         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
-                        return payoutExpected - now;
+                        const remaining = payoutExpected - now;
+                        return remaining <= 0 ? -1 : remaining; // Expired = available
                     };
                     const remA = getRemaining(a);
                     const remB = getRemaining(b);
-                    // Sort by remaining time (lower/negative = closer to or past payout)
                     return mult * (remA - remB);
                 default:
                     return 0;
