@@ -588,16 +588,16 @@ def parse_da_html(html):
         referral_badge = row.select_one('.tw-bg-blue-600')
         if referral_badge and referral_badge.get_text(strip=True).lower() == 'referral':
             if amount > 0:
-                submitted_dt = None
-                if submitted_ms:
-                    submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
+                # For referrals, the time[datetime] is the *transferrable* date (future),
+                # not the submission date. Use current time as the submission timestamp.
+                now_dt = datetime.now(tz=timezone.utc)
                 entries.append({
                     'type': 'referral',
                     'amount': round(amount, 2),
                     'duration': 0,
                     'durationText': '',
-                    'submittedAt': submitted_dt.isoformat() if submitted_dt else '',
-                    'submittedAtMs': submitted_ms or 0,
+                    'submittedAt': now_dt.isoformat(),
+                    'submittedAtMs': int(now_dt.timestamp() * 1000),
                     'projectName': 'Referral Bonus'
                 })
             continue
