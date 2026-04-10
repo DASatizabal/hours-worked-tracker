@@ -1,6 +1,6 @@
 // Configuration for Hours Worked Tracker
 
-const APP_VERSION = '2.0.23';
+const APP_VERSION = '2.0.24';
 
 // Auth roles
 const AUTH_ROLES = {

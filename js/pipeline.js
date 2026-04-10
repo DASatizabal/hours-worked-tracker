@@ -125,6 +125,22 @@ const Pipeline = {
 
         totals.submitted = sessionsStillWaiting;
 
+        // Available for Payout = sum of sessions past waiting that are NOT paid out
+        const paidOutIds = getPaidOutSessionIds(workSessions, emailPayouts);
+        let availableForPayout = 0;
+        workSessions.forEach(s => {
+            const earnings = parseFloat(s.earnings) || 0;
+            if (earnings <= 0 || paidOutIds.has(s.id)) return;
+            if (s.type === 'referral') { availableForPayout += earnings; return; }
+            if (!s.submittedAt) { availableForPayout += earnings; return; }
+            const submittedAt = new Date(s.submittedAt);
+            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+            if (now >= new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000)) {
+                availableForPayout += earnings;
+            }
+        });
+        totals.pending_payout = availableForPayout;
+
         // Calculate email-based totals
         let daTotal = 0;
         let transfersCompleted = 0;
@@ -165,9 +181,6 @@ const Pipeline = {
             }
         });
         unmatchedBankDeposits = Math.max(0, unmatchedBankDeposits);
-
-        // Available for Payout = sessions past waiting - DA payouts received (min 0)
-        totals.pending_payout = Math.max(0, sessionsPastWaiting - daTotal);
 
         // In PayPal = DA payouts - transfers - unmatched bank deposits (min 0)
         totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - unmatchedBankDeposits);
