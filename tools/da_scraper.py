@@ -1,6 +1,6 @@
 """
-DA Payment Scraper & Auto-Importer
-===================================
+DA Scraper — Scrape-only (no payment claiming)
+================================================
 Logs into DataAnnotation Tech, expands all payment rows,
 extracts the HTML, parses entries, and imports them directly
 into Google Sheets via the Apps Script API for automatic reconciliation.
@@ -13,33 +13,14 @@ Usage:
     python da_scraper.py              # Full flow: scrape + import into tracker
     python da_scraper.py --html-only  # Just save HTML to file, skip tracker import
     python da_scraper.py --show-paid  # Also include already-paid entries
-    python da_scraper.py --force      # Run regardless of payday setting
     python da_scraper.py --auto       # Unattended mode (headless, no prompts, daily scrape)
-    python da_scraper.py --get-paid        # Request payout (payday check applies)
-    python da_scraper.py --get-paid --force # Request payout regardless of day
-    python da_scraper.py --get-paid --auto  # Headless payout for Task Scheduler
+    python da_scraper.py --profile lisa  # Use Lisa's credentials
 
 Credentials:
     Create a .env file in the tools/ directory:
         DA_EMAIL=your_email@example.com
         DA_PASSWORD=your_password
         APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_ID/exec
-
-Scheduling (Windows Task Scheduler):
-    The script checks payday from Google Sheets and exits early if
-    today isn't the configured payday. Schedule two daily tasks:
-
-    1. Scraper task (daily, morning):
-       Open Task Scheduler > Create Basic Task
-       Trigger: Daily, pick your morning time (e.g. 7 AM)
-       Action: Start a Program
-       Program: run_scraper.bat  (runs --auto, scrapes + imports every day)
-
-    2. Get-paid task (weekly, on payday):
-       Same setup but with run_get_paid.bat
-       Trigger: Weekly on your payday (e.g. Thursday at noon)
-       Runs --get-paid --auto. The payday check is a safety net in case
-       the schedule fires on the wrong day.
 """
 
 import os
@@ -47,343 +28,21 @@ import sys
 import json
 import re
 import time
-import imaplib
-import email as email_lib
 import argparse
 import logging
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 
-# Load .env from the tools/ directory (--profile overrides in main())
-SCRIPT_DIR = Path(__file__).parent
-load_dotenv(SCRIPT_DIR / '.env')
-
-DA_EMAIL = os.getenv("DA_EMAIL")
-DA_PASSWORD = os.getenv("DA_PASSWORD")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
-YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD", "")
-APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
-DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")  # Multi-user: email to tag records with
-EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")  # 'gmail' or 'yahoo'
-IMAP_EMAIL = os.getenv("IMAP_EMAIL", "")  # IMAP login email (defaults to DA_EMAIL if not set)
-DA_PAYMENTS_URL = "https://app.dataannotation.tech/workers/payments"
-HTML_OUTPUT_DIR = SCRIPT_DIR / "da_html_exports"
-
-# Logging
-LOG_DIR = SCRIPT_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
-log_file = LOG_DIR / f"scraper_{datetime.now().strftime('%Y-%m-%d')}.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler(log_file)]
+from da_common import (
+    SCRIPT_DIR, HTML_OUTPUT_DIR, DA_PAYMENTS_URL,
+    DA_EMAIL, DA_PASSWORD, APPS_SCRIPT_URL, DA_USER_EMAIL,
+    reload_profile, login_to_da, create_browser_and_page, log,
 )
-log = logging.getLogger(__name__)
+import da_common
 
-# Day name mapping (matches JS: 0=Sunday, 1=Monday, ... 6=Saturday)
-DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-DEFAULT_PAYOUT_WEEKDAY = 2  # Tuesday
-
-
-def get_payday_from_sheets():
-    """Read the payoutWeekday setting from Google Sheets via Apps Script."""
-    if not APPS_SCRIPT_URL:
-        log.warning("APPS_SCRIPT_URL not set in .env, using default payday (Tuesday)")
-        return DEFAULT_PAYOUT_WEEKDAY
-
-    try:
-        url = APPS_SCRIPT_URL + '?tab=Settings'
-        response = requests.get(url, timeout=15, allow_redirects=True)
-        data = response.json()
-        records = data.get('records', [])
-        for r in records:
-            if r.get('key') == 'payoutWeekday':
-                day = int(r['value'])
-                log.info(f"Payday from Google Sheets: {DAY_NAMES[day]} ({day})")
-                return day
-    except Exception as e:
-        log.warning(f"Could not read payday from Sheets: {e}")
-
-
-def get_auto_payout_settings():
-    """Read auto-payout settings from Google Sheets via Apps Script."""
-    defaults = {
-        'autoPayoutEnabled': False,
-        'payoutHour': 12,
-        'payoutAmPm': 'PM',
-    }
-    if not APPS_SCRIPT_URL:
-        log.warning("APPS_SCRIPT_URL not set, using default auto-payout settings")
-        return defaults
-
-    try:
-        url = APPS_SCRIPT_URL + '?tab=Settings'
-        response = requests.get(url, timeout=15, allow_redirects=True)
-        data = response.json()
-        records = data.get('records', [])
-        settings = {}
-        for r in records:
-            settings[r.get('key')] = r.get('value')
-
-        return {
-            'autoPayoutEnabled': str(settings.get('autoPayoutEnabled', 'false')).lower() == 'true',
-            'payoutHour': int(settings.get('payoutHour', 12)),
-            'payoutAmPm': settings.get('payoutAmPm', 'PM'),
-        }
-    except Exception as e:
-        log.warning(f"Could not read auto-payout settings from Sheets: {e}")
-        return defaults
-
-    log.info(f"No payday setting found, using default: {DAY_NAMES[DEFAULT_PAYOUT_WEEKDAY]}")
-    return DEFAULT_PAYOUT_WEEKDAY
-
-
-def is_today_payday(payday_weekday):
-    """Check if today matches the configured payday.
-    Python weekday: Monday=0 ... Sunday=6
-    JS weekday: Sunday=0 ... Saturday=6
-    """
-    today_py = datetime.now().weekday()  # Monday=0
-    # Convert Python weekday to JS weekday
-    today_js = (today_py + 1) % 7  # Sunday=0
-    return today_js == payday_weekday
-
-
-def fetch_verification_code_from_email(max_retries=5, retry_delay=5):
-    """Fetch a verification code from email via IMAP (Gmail or Yahoo).
-
-    Searches recent emails from DataAnnotation for a numeric verification code.
-    Retries several times since the email may take a few seconds to arrive.
-    """
-    # Pick the right app password based on provider
-    if EMAIL_PROVIDER.lower() == 'yahoo':
-        app_password = YAHOO_APP_PASSWORD
-        imap_host = "imap.mail.yahoo.com"
-    else:
-        app_password = GMAIL_APP_PASSWORD
-        imap_host = "imap.gmail.com"
-
-    if not app_password:
-        log.error(f"{'YAHOO' if EMAIL_PROVIDER.lower() == 'yahoo' else 'GMAIL'}_APP_PASSWORD not set in .env — cannot fetch verification code.")
-        return None
-
-    # IMAP login email: use IMAP_EMAIL if set, otherwise DA_EMAIL
-    imap_login = IMAP_EMAIL or DA_EMAIL
-
-    sender_patterns = ["dataannotation", "noreply@"]
-    code_pattern = re.compile(r'\b(\d{6})\b')
-
-    for attempt in range(1, max_retries + 1):
-        log.info(f"  -> Checking {EMAIL_PROVIDER} ({imap_login}) for verification code (attempt {attempt}/{max_retries})...")
-        try:
-            mail = imaplib.IMAP4_SSL(imap_host, 993)
-            mail.login(imap_login, app_password)
-            mail.select("INBOX")
-
-            # Search for recent emails (last 2 minutes)
-            since_date = (datetime.now() - timedelta(minutes=5)).strftime("%d-%b-%Y")
-            _, msg_ids = mail.search(None, f'(SINCE "{since_date}")')
-
-            if not msg_ids[0]:
-                log.info(f"     No recent emails found.")
-                mail.logout()
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
-                continue
-
-            # Check emails from newest to oldest
-            id_list = msg_ids[0].split()
-            for msg_id in reversed(id_list):
-                _, msg_data = mail.fetch(msg_id, "(RFC822)")
-                raw_email = msg_data[0][1]
-                msg = email_lib.message_from_bytes(raw_email)
-
-                # Check sender
-                sender = (msg.get("From", "") or "").lower()
-                subject = (msg.get("Subject", "") or "").lower()
-                if not any(p in sender for p in sender_patterns) and "verification" not in subject and "code" not in subject:
-                    continue
-
-                # Check email date is within the last 3 minutes
-                date_str = msg.get("Date", "")
-                try:
-                    msg_date = email_lib.utils.parsedate_to_datetime(date_str)
-                    if msg_date.tzinfo is None:
-                        msg_date = msg_date.replace(tzinfo=timezone.utc)
-                    age = datetime.now(timezone.utc) - msg_date
-                    if age > timedelta(minutes=5):
-                        continue
-                except Exception:
-                    pass  # If we can't parse date, still try the email
-
-                # Extract body text
-                body = ""
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        content_type = part.get_content_type()
-                        if content_type == "text/plain":
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                body = payload.decode("utf-8", errors="replace")
-                                break
-                        elif content_type == "text/html" and not body:
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                body = payload.decode("utf-8", errors="replace")
-                else:
-                    payload = msg.get_payload(decode=True)
-                    if payload:
-                        body = payload.decode("utf-8", errors="replace")
-
-                # Search for 6-digit code in subject and body
-                for text in [msg.get("Subject", ""), body]:
-                    match = code_pattern.search(text)
-                    if match:
-                        code = match.group(1)
-                        log.info(f"  -> Found verification code: {code}")
-                        mail.logout()
-                        return code
-
-            mail.logout()
-
-        except imaplib.IMAP4.error as e:
-            log.error(f"  -> IMAP error: {e}")
-            return None
-        except Exception as e:
-            log.warning(f"  -> Email fetch error: {e}")
-
-        if attempt < max_retries:
-            log.info(f"     Code not found yet, retrying in {retry_delay}s...")
-            time.sleep(retry_delay)
-
-    log.error(f"  -> Could not find verification code in {EMAIL_PROVIDER} after all retries.")
-    return None
-
-
-def login_to_da(page):
-    """Navigate to DA and log in with email/password."""
-    log.info("[1/6] Navigating to DA payments page...")
-    page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
-
-    # If redirected to login, fill credentials
-    if "login" in page.url.lower() or "sign" in page.url.lower():
-        log.info("[2/6] Logging in...")
-        email_field = page.locator('input[type="email"], input[name="email"], input[id*="email"]').first
-        email_field.wait_for(state="visible", timeout=10000)
-        email_field.fill(DA_EMAIL)
-
-        password_field = page.locator('input[type="password"], input[name="password"]').first
-        password_field.wait_for(state="visible", timeout=5000)
-        password_field.fill(DA_PASSWORD)
-
-        submit_btn = page.locator('button[type="submit"], input[type="submit"]').first
-        submit_btn.click()
-
-        # Wait a moment for the page to respond
-        page.wait_for_timeout(3000)
-
-        # Check if we landed on workers page or got a verification prompt
-        if "/workers/" in page.url:
-            log.info("  -> Login successful (no verification needed)!")
-        else:
-            # Look for a verification/OTP code input field
-            code_input = page.locator(
-                'input[type="text"][name*="code"], '
-                'input[type="number"][name*="code"], '
-                'input[type="tel"], '
-                'input[name*="otp"], '
-                'input[name*="verification"], '
-                'input[placeholder*="code" i], '
-                'input[placeholder*="verif" i], '
-                'input[aria-label*="code" i], '
-                'input[aria-label*="verif" i]'
-            ).first
-
-            try:
-                code_input.wait_for(state="visible", timeout=5000)
-                log.info("  -> Verification code prompt detected!")
-
-                # Fetch the code from Gmail
-                code = fetch_verification_code_from_email()
-                if not code:
-                    log.error("  -> Failed to get verification code. Cannot proceed.")
-                    raise Exception("Verification code required but could not be fetched from Gmail.")
-
-                # Enter the code
-                code_input.fill(code)
-                log.info(f"  -> Entered verification code.")
-
-                # Submit the code
-                verify_btn = page.locator('button[type="submit"], input[type="submit"]').first
-                verify_btn.click()
-
-                # Wait for redirect to workers page
-                page.wait_for_url("**/workers/**", timeout=60000)
-                log.info("  -> Login successful (with verification code)!")
-
-            except PWTimeout:
-                # No verification input found, or redirect took too long.
-                # Check if we're already on /workers/
-                if "/workers/" in page.url:
-                    log.info("  -> Already on workers page, continuing.")
-                else:
-                    log.info("  -> No verification input found, waiting for redirect...")
-                    try:
-                        page.wait_for_url("**/workers/**", timeout=15000)
-                        log.info("  -> Login successful!")
-                    except PWTimeout:
-                        raise Exception(
-                            f"Login failed — stuck at {page.url}. "
-                            "Not a verification prompt and not redirecting to /workers/."
-                        )
-    else:
-        log.info("[2/6] Already logged in, skipping.")
-
-    # Make sure we're on the payments page
-    if "/workers/payments" not in page.url:
-        page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
-
-    page.wait_for_timeout(2000)
-
-
-def claim_payment(page):
-    """Click the 'Get paid' button on the payments page to request payout."""
-    log.info("[3/3] Looking for 'Get paid' button...")
-
-    try:
-        get_paid_btn = page.locator('button.btn.btn-primary', has_text='Get paid').first
-        get_paid_btn.wait_for(state="visible", timeout=10000)
-
-        btn_text = get_paid_btn.text_content().strip()
-        log.info(f"  -> Found button: \"{btn_text}\"")
-
-        get_paid_btn.click()
-        log.info("  -> Clicked 'Get paid' button.")
-
-        # Wait for the transfer-in-progress confirmation to appear
-        try:
-            page.locator('#transferInProgress').wait_for(state="visible", timeout=15000)
-            log.info("  -> Transfer initiated! Confirmation element visible.")
-        except PWTimeout:
-            log.warning("  -> Transfer confirmation (#transferInProgress) did not appear within 15s.")
-
-        # Take a screenshot for the record
-        screenshot_path = str(SCRIPT_DIR / "da_payment_claimed.png")
-        page.screenshot(path=screenshot_path)
-        log.info(f"  -> Screenshot saved to da_payment_claimed.png")
-        log.info("")
-        log.info("=" * 55)
-        log.info(f" PAYMENT CLAIMED: {btn_text}")
-        log.info("=" * 55)
-
-    except PWTimeout:
-        log.info("  -> No 'Get paid' button found (may not have a balance to claim).")
-        page.screenshot(path=str(SCRIPT_DIR / "da_payment_claimed.png"))
-        log.info("  -> Screenshot saved to da_payment_claimed.png")
+log = logging.getLogger("da_scraper")
 
 
 def ensure_view_all_tab(page):
@@ -425,7 +84,6 @@ def expand_all_rows(page):
             const svgs = document.querySelectorAll('svg.tw-rounded-full');
             let clicked = 0;
             for (const svg of svgs) {
-                // Skip arrows we've already expanded
                 if (svg.dataset.expanded === '1') continue;
                 const style = svg.getAttribute('style') || '';
                 if (style.includes('rotate(-0.25turn)')) {
@@ -510,7 +168,6 @@ def save_html_to_file(html):
 def parse_da_html(html):
     """Parse DA payments HTML and extract work entries.
 
-    Replicates the JS parseDAHtml() logic using BeautifulSoup.
     Returns a list of dicts with: type, amount, duration, submittedAt, projectName
     """
     soup = BeautifulSoup(html, 'html.parser')
@@ -524,7 +181,6 @@ def parse_da_html(html):
         is_date_row = 'tw-bg-[#E5D3EB]' in row_class_str or 'tw-border-primary-light-50' in row_class_str
 
         # Check indent level to distinguish headers vs sub-items
-        # Find the div carrying the tw-ml-* indent class (may be nested 2-3 levels deep)
         title_td = row.select_one('[data-column-id="title"]')
         title_div = None
         title_div_class = ''
@@ -541,18 +197,15 @@ def parse_da_html(html):
         title_span = row.select_one('[data-column-id="title"] span')
         title = title_span.get_text(strip=True) if title_span else ''
 
-        # Get amount — new layout puts amount in targeted divs, not the whole cell
+        # Get amount
         amount_td = row.select_one('[data-column-id="amount"]')
         amount = 0.0
         if amount_td:
-            # Sub-items: amount in .tw-text-sm.tw-text-black-80
-            # Totals: amount in .tw-font-semibold
             amount_el = (amount_td.select_one('.tw-font-semibold')
                          or amount_td.select_one('.tw-text-sm.tw-text-black-80'))
             if amount_el:
                 amount_text = amount_el.get_text(strip=True)
             else:
-                # Fallback: old layout — direct child div text
                 amount_cell = amount_td.select_one(':scope > div')
                 amount_text = amount_cell.get_text(strip=True) if amount_cell else ''
             try:
@@ -560,7 +213,7 @@ def parse_da_html(html):
             except (ValueError, TypeError):
                 amount = 0.0
 
-        # Get time/duration text — try old column first, fall back to amount cell
+        # Get time/duration text
         time_cell = row.select_one('[data-column-id="time"] > div')
         if time_cell:
             time_text = time_cell.get_text(strip=True)
@@ -568,7 +221,7 @@ def parse_da_html(html):
             duration_el = amount_td.select_one('.tw-text-sm.tw-text-black-60') if amount_td else None
             time_text = duration_el.get_text(strip=True) if duration_el else ''
 
-        # Get submitted timestamp — try old column first, fall back to amount cell
+        # Get submitted timestamp
         time_el = row.select_one('[data-column-id="timeAgo"] time[datetime]')
         if not time_el and amount_td:
             time_el = amount_td.select_one('time[datetime]')
@@ -602,7 +255,7 @@ def parse_da_html(html):
                 })
             continue
 
-        # Project name headers are at tw-ml-5 (or tw-ml-0 without date bg)
+        # Project name headers
         is_project_header = (is_top_level or 'tw-ml-5' in title_div_class) and not is_sub_item
         if is_project_header and title not in ('Task Submission', 'Time Entry'):
             current_project = title
@@ -613,7 +266,6 @@ def parse_da_html(html):
 
         # Parse sub-items
         if title == 'Time Entry' and amount > 0 and submitted_ms:
-            # Project-type work (has duration)
             duration = 0.0
             h_match = re.search(r'(\d+)\s*h', time_text)
             m_match = re.search(r'(\d+)\s*min', time_text)
@@ -634,7 +286,6 @@ def parse_da_html(html):
             })
 
         elif title == 'Task Submission' and amount > 0 and submitted_ms:
-            # Task-type work (no duration)
             submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
             entries.append({
                 'type': 'task',
@@ -651,18 +302,13 @@ def parse_da_html(html):
 
 
 def fetch_existing_sessions():
-    """Fetch existing work sessions from Google Sheets via Apps Script.
-
-    Returns a list of session records on success.
-    Returns None on failure (timeout, network error, etc.) so the caller
-    can distinguish between 'no records exist' and 'fetch failed'.
-    """
-    if not APPS_SCRIPT_URL:
+    """Fetch existing work sessions from Google Sheets via Apps Script."""
+    if not da_common.APPS_SCRIPT_URL:
         log.error("APPS_SCRIPT_URL not set in .env — cannot fetch sessions.")
         return None
 
     try:
-        url = APPS_SCRIPT_URL + '?tab=WorkSessions'
+        url = da_common.APPS_SCRIPT_URL + '?tab=WorkSessions'
         response = requests.get(url, timeout=30, allow_redirects=True)
         data = response.json()
         records = data.get('records', [])
@@ -674,15 +320,7 @@ def fetch_existing_sessions():
 
 
 def reconcile_da_entries(da_entries, sessions):
-    """Match DA entries against existing sessions.
-
-    Replicates the JS reconcileDAData() logic:
-    - Exact amount match (2 decimal places)
-    - Same type (project/task)
-    - Date within ±3 days
-    - Pick closest timestamp match
-    - Matched if timestamps within 5 minutes, otherwise correction needed
-    """
+    """Match DA entries against existing sessions."""
     matched = []
     corrections = []
     unmatched = []
@@ -690,7 +328,6 @@ def reconcile_da_entries(da_entries, sessions):
 
     for da in da_entries:
         if not da['submittedAt']:
-            # Entries without timestamps (e.g. referrals) can't be reconciled
             unmatched.append({'da': da})
             continue
 
@@ -704,7 +341,6 @@ def reconcile_da_entries(da_entries, sessions):
             if sid in used_session_ids:
                 continue
 
-            # Amount must match exactly (2 decimal places)
             try:
                 s_earnings = round(float(session.get('earnings', 0)), 2)
             except (ValueError, TypeError):
@@ -712,11 +348,9 @@ def reconcile_da_entries(da_entries, sessions):
             if s_earnings != da['amount']:
                 continue
 
-            # Type must match
             if session.get('type') != da['type']:
                 continue
 
-            # Date must be within 3 days
             session_submitted = session.get('submittedAt')
             session_date_str = session.get('date', '')
             if session_submitted:
@@ -735,7 +369,6 @@ def reconcile_da_entries(da_entries, sessions):
             if session_dt is None:
                 continue
 
-            # Ensure both are offset-aware or offset-naive for comparison
             if da_date.tzinfo and not session_dt.tzinfo:
                 session_dt = session_dt.replace(tzinfo=timezone.utc)
             elif not da_date.tzinfo and session_dt.tzinfo:
@@ -784,12 +417,8 @@ def reconcile_da_entries(da_entries, sessions):
 
 
 def import_to_sheets(corrections, unmatched):
-    """Push corrections and new entries to Google Sheets via Apps Script.
-
-    - Corrections: update submittedAt (and optionally duration/notes)
-    - New entries: add as new WorkSession records
-    """
-    if not APPS_SCRIPT_URL:
+    """Push corrections and new entries to Google Sheets via Apps Script."""
+    if not da_common.APPS_SCRIPT_URL:
         log.error("APPS_SCRIPT_URL not set — cannot import to Sheets.")
         return
 
@@ -799,19 +428,16 @@ def import_to_sheets(corrections, unmatched):
 
     log.info(f"[6/6] Importing to Sheets: {len(corrections)} corrections, {len(unmatched)} new entries...")
 
-    # Apply corrections
     for c in corrections:
         session = c['session']
         da = c['da']
         updates = {'submittedAt': c['newSubmittedAt']}
 
-        # Also update duration if DA has it and session doesn't
         s_duration = float(session.get('duration', 0) or 0)
         if da['duration'] > 0 and s_duration == 0:
             updates['duration'] = da['duration']
             updates['hourlyRate'] = round(da['amount'] / da['duration'])
 
-        # Add project name to projectId if session has none
         if da['projectName'] and not session.get('projectId'):
             updates['projectId'] = da['projectName']
 
@@ -823,7 +449,7 @@ def import_to_sheets(corrections, unmatched):
                 'updates': updates
             })
             resp = requests.post(
-                APPS_SCRIPT_URL,
+                da_common.APPS_SCRIPT_URL,
                 headers={'Content-Type': 'text/plain'},
                 data=payload,
                 timeout=30,
@@ -837,11 +463,10 @@ def import_to_sheets(corrections, unmatched):
         except Exception as e:
             log.error(f"  -> Correction request failed for {session['id']}: {e}")
 
-    # Add new entries
     for u in unmatched:
         da = u['da']
         record_id = f"ws_{int(time.time() * 1000)}_{os.urandom(4).hex()}"
-        user_email = DA_USER_EMAIL or DA_EMAIL
+        user_email = da_common.DA_USER_EMAIL or da_common.DA_EMAIL
         record_date = da['submittedAt'][:10] if da['submittedAt'] else datetime.now().strftime('%Y-%m-%d')
         record = {
             'id': record_id,
@@ -863,7 +488,7 @@ def import_to_sheets(corrections, unmatched):
                 'record': record
             })
             resp = requests.post(
-                APPS_SCRIPT_URL,
+                da_common.APPS_SCRIPT_URL,
                 headers={'Content-Type': 'text/plain'},
                 data=payload,
                 timeout=30,
@@ -877,151 +502,78 @@ def import_to_sheets(corrections, unmatched):
         except Exception as e:
             log.error(f"  -> Add request failed for {record_id}: {e}")
 
-        # Small delay to avoid generating duplicate IDs
         time.sleep(0.05)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DA Payment Scraper & Auto-Importer")
+    parser = argparse.ArgumentParser(description="DA Payment Scraper (scrape only, no payment claiming)")
     parser.add_argument("--html-only", action="store_true",
                         help="Only extract and save HTML, don't import into tracker")
     parser.add_argument("--headless", action="store_true",
                         help="Run without visible browser")
     parser.add_argument("--show-paid", action="store_true",
                         help="Include already-paid entries (check 'Show paid')")
-    parser.add_argument("--force", action="store_true",
-                        help="Run regardless of payday setting")
     parser.add_argument("--auto", action="store_true",
                         help="Unattended mode: headless, no prompts")
-    parser.add_argument("--get-paid", action="store_true",
-                        help="Click the 'Get paid' button to request payout")
     parser.add_argument("--profile", default="default",
-                        help="Profile name: loads .env.<profile> instead of .env (e.g., --profile lisa)")
+                        help="Profile name: loads .env.<profile> (e.g., --profile lisa)")
     args = parser.parse_args()
 
-    # Load profile-specific .env if not default
     if args.profile != 'default':
-        global DA_EMAIL, DA_PASSWORD, GMAIL_APP_PASSWORD, YAHOO_APP_PASSWORD, APPS_SCRIPT_URL, DA_USER_EMAIL, EMAIL_PROVIDER, IMAP_EMAIL
-        profile_env = SCRIPT_DIR / f'.env.{args.profile}'
-        if not profile_env.exists():
-            log.error(f"Profile .env file not found: {profile_env}")
-            sys.exit(1)
-        load_dotenv(profile_env, override=True)
-        DA_EMAIL = os.getenv("DA_EMAIL")
-        DA_PASSWORD = os.getenv("DA_PASSWORD")
-        GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
-        YAHOO_APP_PASSWORD = os.getenv("YAHOO_APP_PASSWORD", "")
-        APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "")
-        DA_USER_EMAIL = os.getenv("DA_USER_EMAIL", "")
-        EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")
-        IMAP_EMAIL = os.getenv("IMAP_EMAIL", "")
-        log.info(f"Loaded profile: {args.profile} ({DA_EMAIL})")
+        reload_profile(args.profile)
 
-    # --auto implies --headless
     if args.auto:
         args.headless = True
 
-    # Payday check only applies to --get-paid (scraping should run daily)
-    if args.get_paid and not args.force:
-        # Auto-payout check: when --auto, verify auto-payout is enabled in settings
-        if args.auto:
-            auto_settings = get_auto_payout_settings()
-            if not auto_settings['autoPayoutEnabled']:
-                log.info("Auto-payout is disabled in settings. Exiting. "
-                         "(Enable in app Settings or use --force to override)")
-                sys.exit(0)
+    log.info("Starting daily scrape...")
 
-        payday = get_payday_from_sheets()
-        if not is_today_payday(payday):
-            log.info(f"Today is {DAY_NAMES[(datetime.now().weekday() + 1) % 7]}, "
-                     f"payday is {DAY_NAMES[payday]}. Skipping payout. (Use --force to override)")
-            sys.exit(0)
-        log.info(f"Today is payday ({DAY_NAMES[payday]})! Starting payment claim...")
-    elif args.get_paid:
-        log.info("Starting payment claim (--force, skipping payday check)...")
-    else:
-        log.info("Starting daily scrape...")
-
-    if not DA_EMAIL or not DA_PASSWORD:
+    if not da_common.DA_EMAIL or not da_common.DA_PASSWORD:
         log.error("Missing credentials! Create a .env file with DA_EMAIL and DA_PASSWORD.")
         sys.exit(1)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=args.headless)
-        context = browser.new_context(
-            viewport={"width": 1400, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        )
-        page = context.new_page()
-
-        # Capture browser console messages and network requests to detect
-        # any auto-payout behavior from DA's frontend JavaScript
-        def on_console(msg):
-            text = msg.text.lower()
-            if any(kw in text for kw in ['payout', 'pay', 'transfer', 'withdraw', 'claim', 'balance']):
-                log.info(f"  [CONSOLE] {msg.type}: {msg.text[:300]}")
-        page.on("console", on_console)
-
-        def on_response(response):
-            url = response.url.lower()
-            if any(kw in url for kw in ['payout', 'pay', 'transfer', 'withdraw', 'claim', 'stripe']):
-                log.info(f"  [NETWORK] {response.status} {response.request.method} {response.url[:200]}")
-        page.on("response", on_response)
+        browser, page = create_browser_and_page(p, headless=args.headless)
 
         try:
-            if args.get_paid:
-                # --get-paid mode: login and claim payment, skip scraping
-                login_to_da(page)
-                claim_payment(page)
+            login_to_da(page)
+
+            html_parts = scrape_all_pages(page, show_paid=args.show_paid)
+            combined_html = combine_html_pages(html_parts)
+
+            saved_path = save_html_to_file(combined_html)
+
+            if args.html_only:
+                log.info(f"\nDone! HTML saved to: {saved_path}")
             else:
-                # Normal mode: scrape + import
-                # Steps 1-2: Login
-                login_to_da(page)
+                da_entries = parse_da_html(combined_html)
 
-                # Steps 3-4: Select tab, expand all rows, paginate
-                html_parts = scrape_all_pages(page, show_paid=args.show_paid)
-                combined_html = combine_html_pages(html_parts)
+                # Deduplicate parsed entries
+                seen_keys = set()
+                unique_entries = []
+                for entry in da_entries:
+                    key = (entry['submittedAtMs'], entry['amount'], entry['type'])
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        unique_entries.append(entry)
+                if len(unique_entries) < len(da_entries):
+                    log.info(f"  -> Deduplicated: {len(da_entries)} -> {len(unique_entries)} entries")
+                da_entries = unique_entries
 
-                # Step 5: Save backup
-                saved_path = save_html_to_file(combined_html)
-
-                if args.html_only:
-                    log.info(f"\nDone! HTML saved to: {saved_path}")
+                sessions = fetch_existing_sessions()
+                if sessions is None:
+                    log.error("Cannot reconcile without existing sessions. "
+                              "Aborting import to prevent duplicates. HTML backup saved.")
                 else:
-                    # Step 6: Parse, reconcile, and import via API
-                    da_entries = parse_da_html(combined_html)
+                    result = reconcile_da_entries(da_entries, sessions)
+                    import_to_sheets(result['corrections'], result['unmatched'])
 
-                    # Deduplicate parsed entries (same submittedAtMs = same work item)
-                    seen_keys = set()
-                    unique_entries = []
-                    for entry in da_entries:
-                        key = (entry['submittedAtMs'], entry['amount'], entry['type'])
-                        if key not in seen_keys:
-                            seen_keys.add(key)
-                            unique_entries.append(entry)
-                    if len(unique_entries) < len(da_entries):
-                        log.info(f"  -> Deduplicated: {len(da_entries)} -> {len(unique_entries)} entries")
-                    da_entries = unique_entries
-
-                    sessions = fetch_existing_sessions()
-                    if sessions is None:
-                        log.error("Cannot reconcile without existing sessions. "
-                                  "Aborting import to prevent duplicates. HTML backup saved.")
-                    else:
-                        result = reconcile_da_entries(da_entries, sessions)
-                        import_to_sheets(result['corrections'], result['unmatched'])
-
-                        log.info("")
-                        log.info("=" * 55)
-                        log.info(" DONE! Data reconciled via API.")
-                        log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
-                                 f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
-                        log.info(f" HTML backup: {saved_path}")
-                        log.info("=" * 55)
+                    log.info("")
+                    log.info("=" * 55)
+                    log.info(" DONE! Data reconciled via API.")
+                    log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
+                             f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
+                    log.info(f" HTML backup: {saved_path}")
+                    log.info("=" * 55)
 
         except Exception as e:
             log.error(f"ERROR: {e}")
