@@ -615,8 +615,8 @@ def parse_da_html(html):
         if title == 'Time Entry' and amount > 0 and submitted_ms:
             # Project-type work (has duration)
             duration = 0.0
-            h_match = re.search(r'(\d+)h', time_text)
-            m_match = re.search(r'(\d+)min', time_text)
+            h_match = re.search(r'(\d+)\s*h', time_text)
+            m_match = re.search(r'(\d+)\s*min', time_text)
             if h_match:
                 duration += int(h_match.group(1))
             if m_match:
