@@ -670,23 +670,29 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Sort order (desc): countdown high→low, then ✓ (available), then $ (paid out)
-                    // Paid out = -Infinity, available = -1, pending = positive ms remaining
+                    // Sort order (desc): countdown high→low, then ✓ available (oldest first),
+                    // then $ paid out (oldest first). Groups: 2=pending, 1=available, 0=paid out
                     const now = new Date();
                     const paidOut = this._paidOutIds || new Set();
-                    const getRemaining = (s) => {
-                        if (paidOut.has(s.id)) return -Infinity; // Paid out goes last
-                        if (!s.submittedAt) return -1; // Available
-                        if (s.type === 'referral') return -1; // Instantly available
-                        const submittedAt = new Date(s.submittedAt);
-                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-                        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
-                        const remaining = payoutExpected - now;
-                        return remaining <= 0 ? -1 : remaining; // Expired = available
+                    const getPayoutInfo = (s) => {
+                        const availableAt = (() => {
+                            if (!s.submittedAt || s.type === 'referral') return 0;
+                            const submittedAt = new Date(s.submittedAt);
+                            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+                            return submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
+                        })();
+                        const remaining = availableAt - now;
+                        if (remaining > 0) return { group: 2, sortVal: remaining };
+                        if (paidOut.has(s.id)) return { group: 0, sortVal: availableAt };
+                        return { group: 1, sortVal: availableAt };
                     };
-                    const remA = getRemaining(a);
-                    const remB = getRemaining(b);
-                    return mult * (remA - remB);
+                    const infoA = getPayoutInfo(a);
+                    const infoB = getPayoutInfo(b);
+                    if (infoA.group !== infoB.group) return mult * (infoA.group - infoB.group);
+                    // Within same group: pending sorts by remaining (high→low),
+                    // available/paid sort by availableAt (oldest first = ascending)
+                    if (infoA.group === 2) return mult * (infoA.sortVal - infoB.sortVal);
+                    return mult * -(infoA.sortVal - infoB.sortVal);
                 default:
                     return 0;
             }
