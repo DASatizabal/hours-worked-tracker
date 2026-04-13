@@ -228,7 +228,13 @@ def parse_da_html(html):
         submitted_ms = None
         if time_el and time_el.get('datetime'):
             try:
-                submitted_ms = int(time_el['datetime'])
+                ts = int(time_el['datetime'])
+                # DA reuses time[datetime] for two things:
+                # - "Pending Approval · X ago" → past timestamp (submission date) ✓
+                # - "Transferrable in X · Y ago" → future timestamp (payout window) ✗
+                # Only use past timestamps as submittedAt
+                if ts <= int(datetime.now(tz=timezone.utc).timestamp() * 1000):
+                    submitted_ms = ts
             except (ValueError, TypeError):
                 pass
 
