@@ -538,7 +538,7 @@ def main():
         sys.exit(1)
 
     with sync_playwright() as p:
-        browser, page = create_browser_and_page(p, headless=args.headless)
+        browser, page = create_browser_and_page(p, headless=args.headless, block_payouts=True)
 
         try:
             login_to_da(page)

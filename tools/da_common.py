@@ -307,8 +307,13 @@ def login_to_da(page):
     page.wait_for_timeout(2000)
 
 
-def create_browser_and_page(playwright, headless=False):
-    """Launch Chromium and create a page with standard settings and debug listeners."""
+def create_browser_and_page(playwright, headless=False, block_payouts=False):
+    """Launch Chromium and create a page with standard settings and debug listeners.
+
+    Args:
+        block_payouts: If True, intercept and abort any POST to /get_paid.
+            Used by the scraper to prevent DA's frontend JS from auto-triggering payouts.
+    """
     browser = playwright.chromium.launch(headless=headless)
     context = browser.new_context(
         viewport={"width": 1400, "height": 900},
@@ -320,8 +325,15 @@ def create_browser_and_page(playwright, headless=False):
     )
     page = context.new_page()
 
-    # Capture browser console messages and network requests to detect
-    # any auto-payout behavior from DA's frontend JavaScript
+    # Block DA's auto-payout: their frontend JS fires POST /get_paid on page load
+    # when the 72h cooldown has expired. Only the payer script should allow this.
+    if block_payouts:
+        def handle_route(route):
+            log.info(f"  [BLOCKED] {route.request.method} {route.request.url} — auto-payout intercepted")
+            route.abort()
+        page.route("**/workers/payments/get_paid", handle_route)
+
+    # Capture browser console messages and network requests for debugging
     def on_console(msg):
         text = msg.text.lower()
         if any(kw in text for kw in ['payout', 'pay', 'transfer', 'withdraw', 'claim', 'balance']):
