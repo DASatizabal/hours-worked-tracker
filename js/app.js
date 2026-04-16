@@ -609,7 +609,7 @@ const App = {
                 : '';
             return `
             <tr class="hover:bg-white/5 transition-colors">
-                <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}${userBadge}</td>
+                <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.submittedAt || s.date)}${userBadge}</td>
                 <td class="px-4 py-3 text-sm">
                     <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : s.type === 'referral' ? 'bg-emerald-500/20 text-emerald-400' : s.type === 'bonus' ? 'bg-amber-500/20 text-amber-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : s.type === 'referral' ? 'Referral' : s.type === 'bonus' ? 'Bonus' : 'Task'}</span>
                 </td>
@@ -997,7 +997,7 @@ const App = {
             sessionList.innerHTML = unassigned.map(s => `
                 <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-white/5 cursor-pointer">
                     <input type="checkbox" class="payment-session-cb rounded" value="${s.id}" data-amount="${s.earnings}" data-type="${s.type}">
-                    <span class="text-sm text-white">${this.formatDate(s.date)} - ${s.duration}h - ${formatCurrency(s.earnings)} (${s.type})</span>
+                    <span class="text-sm text-white">${this.formatDate(s.submittedAt || s.date)} - ${s.duration}h - ${formatCurrency(s.earnings)} (${s.type})</span>
                 </label>
             `).join('');
 
@@ -2039,6 +2039,17 @@ const App = {
 
     formatDate(dateStr) {
         if (!dateStr) return '';
+        if (dateStr.includes('T')) {
+            const d = new Date(dateStr);
+            const month = d.getMonth() + 1;
+            const day = d.getDate();
+            const year = d.getFullYear();
+            let hours = d.getHours();
+            const mins = d.getMinutes().toString().padStart(2, '0');
+            const ampm = hours >= 12 ? 'pm' : 'am';
+            hours = hours % 12 || 12;
+            return `${month}/${day}/${year} ${hours}:${mins}${ampm}`;
+        }
         const [y, m, d] = dateStr.split('-');
         return `${parseInt(m)}/${parseInt(d)}/${y}`;
     }

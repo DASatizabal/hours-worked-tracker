@@ -562,17 +562,10 @@ def main():
             else:
                 da_entries = parse_da_html(combined_html)
 
-                # Deduplicate parsed entries
-                seen_keys = set()
-                unique_entries = []
-                for entry in da_entries:
-                    key = (entry['submittedAtMs'], entry['amount'], entry['type'])
-                    if key not in seen_keys:
-                        seen_keys.add(key)
-                        unique_entries.append(entry)
-                if len(unique_entries) < len(da_entries):
-                    log.info(f"  -> Deduplicated: {len(da_entries)} -> {len(unique_entries)} entries")
-                da_entries = unique_entries
+                # No parser-level dedup — the reconciler handles dedup against
+                # existing sessions. Parser dedup was too aggressive: $10 task
+                # submissions from different reviews can share (timestamp, amount,
+                # type) keys and were being falsely removed.
 
                 sessions = fetch_existing_sessions()
                 if sessions is None:
