@@ -20,7 +20,7 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
     const now = new Date();
     const paidIds = new Set();
 
-    // Group sessions past waiting period by user, sorted oldest-first
+    // Group sessions past waiting period by user, sorted by availability date
     const byUser = {};
     sessions.forEach(s => {
         if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
@@ -28,13 +28,14 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
         const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
         if (now < payoutExpected) return;
+        s._availableAt = payoutExpected.getTime();
         const email = (s.userEmail || '').toLowerCase();
         if (!byUser[email]) byUser[email] = [];
         byUser[email].push(s);
     });
 
-    // Sort each user's sessions oldest-first
-    Object.values(byUser).forEach(arr => arr.sort((a, b) => (a.submittedAt || '').localeCompare(b.submittedAt || '')));
+    // Sort by availability date (earliest-available first)
+    Object.values(byUser).forEach(arr => arr.sort((a, b) => a._availableAt - b._availableAt));
 
     // Sum DA payouts per user
     const daTotals = {};
@@ -44,7 +45,7 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
         daTotals[email] = (daTotals[email] || 0) + (parseFloat(e.amount) || 0);
     });
 
-    // Walk each user's sessions oldest-first, covering with their DA total
+    // Walk each user's sessions by availability date, covering with their DA total
     for (const email of Object.keys(byUser)) {
         let remaining = daTotals[email] || 0;
         for (const s of byUser[email]) {
@@ -53,9 +54,9 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
             if (remaining >= earnings - 0.01) {
                 remaining -= earnings;
                 paidIds.add(s.id);
-            } else {
-                break;
             }
+            // Don't break — DA pool subtraction can cover smaller sessions
+            // even when a larger one can't be fully covered yet
         }
     }
 
