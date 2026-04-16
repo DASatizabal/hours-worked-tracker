@@ -24,12 +24,10 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
     const byUser = {};
     sessions.forEach(s => {
         if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
-        if (s.type !== 'referral') {
-            const submittedAt = new Date(s.submittedAt);
-            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-            const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
-            if (now < payoutExpected) return;
-        }
+        const submittedAt = new Date(s.submittedAt);
+        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
+        if (now < payoutExpected) return;
         const email = (s.userEmail || '').toLowerCase();
         if (!byUser[email]) byUser[email] = [];
         byUser[email].push(s);
@@ -70,15 +68,9 @@ function getPayoutCountdown(session, isPaidOut) {
         return { html: '-', expired: true };
     }
 
-    // Referrals are instantly available — skip countdown
-    if (session.type === 'referral') {
-        const icon = isPaidOut ? '$' : '✓';
-        return { html: `<span class="text-emerald-400">${icon}</span>`, expired: true };
-    }
-
     const now = new Date();
     const submittedAt = new Date(session.submittedAt);
-    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
     const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
     const remainingMs = payoutExpected - now;
 
@@ -165,14 +157,8 @@ function calculateNextPaycheck(sessions, deadline, emailPayouts) {
 
         const earnings = parseFloat(session.earnings) || 0;
 
-        // Referrals are instantly available
-        if (session.type === 'referral') {
-            availableNow += earnings;
-            continue;
-        }
-
         const submittedAt = new Date(session.submittedAt);
-        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
         if (now >= payoutExpected) {
@@ -205,7 +191,7 @@ const App = {
     _submitting: false, // Prevent double-clicks
 
     // Sessions table sorting state
-    _sessionsSort: { column: 'date', direction: 'desc' },
+    _sessionsSort: { column: 'payout', direction: 'desc' },
 
     // Sessions table filter state
     _sessionsFilter: { type: 'all', payout: 'all', date: 'all' },
@@ -670,29 +656,14 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Sort order (desc): countdown high→low, then ✓ available (oldest first),
-                    // then $ paid out (oldest first). Groups: 2=pending, 1=available, 0=paid out
-                    const now = new Date();
-                    const paidOut = this._paidOutIds || new Set();
-                    const getPayoutInfo = (s) => {
-                        const availableAt = (() => {
-                            if (!s.submittedAt || s.type === 'referral') return 0;
-                            const submittedAt = new Date(s.submittedAt);
-                            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-                            return submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
-                        })();
-                        const remaining = availableAt - now;
-                        if (remaining > 0) return { group: 2, sortVal: remaining };
-                        if (paidOut.has(s.id)) return { group: 0, sortVal: availableAt };
-                        return { group: 1, sortVal: availableAt };
+                    // Chronological by availableAt (desc): highest countdown → most recently available → oldest
+                    const getAvailableAt = (s) => {
+                        if (!s.submittedAt) return 0;
+                        const submittedAt = new Date(s.submittedAt);
+                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+                        return submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
                     };
-                    const infoA = getPayoutInfo(a);
-                    const infoB = getPayoutInfo(b);
-                    if (infoA.group !== infoB.group) return mult * (infoA.group - infoB.group);
-                    // Within same group: pending sorts by remaining (high→low),
-                    // available/paid sort by availableAt (oldest first = ascending)
-                    if (infoA.group === 2) return mult * (infoA.sortVal - infoB.sortVal);
-                    return mult * -(infoA.sortVal - infoB.sortVal);
+                    return mult * (getAvailableAt(a) - getAvailableAt(b));
                 default:
                     return 0;
             }
