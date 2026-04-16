@@ -59,18 +59,38 @@ def ensure_view_all_tab(page):
 
 
 def toggle_show_paid(page, enable=False):
-    """Check/uncheck the 'Show paid' checkbox."""
+    """Toggle the 'Include paid' filter button (DA redesigned from checkbox to button)."""
     if not enable:
         return
-    log.info("  -> Enabling 'Show paid' checkbox...")
+    log.info("  -> Enabling 'Include paid' filter...")
+    # Wait for React to hydrate the Funds History table
+    page.wait_for_timeout(5000)
+    # Use JS to find and click — Playwright selectors struggle with React-rendered buttons
+    clicked = page.evaluate("""() => {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+            if (btn.textContent.trim().toLowerCase() === 'include paid') {
+                btn.click();
+                return true;
+            }
+        }
+        return false;
+    }""")
+    if clicked:
+        page.wait_for_timeout(3000)
+        log.info("  -> 'Include paid' toggled on.")
+        return
+    # Fallback: old checkbox UI
     try:
         checkbox = page.locator('input[type="checkbox"]').first
-        if not checkbox.is_checked():
+        if checkbox.is_visible(timeout=2000) and not checkbox.is_checked():
             checkbox.click()
             page.wait_for_timeout(2000)
-            log.info("  -> 'Show paid' enabled.")
+            log.info("  -> 'Show paid' checkbox enabled (legacy UI).")
+            return
     except Exception:
-        log.info("  -> Could not toggle 'Show paid' checkbox.")
+        pass
+    log.info("  -> Could not toggle 'Include paid' — UI element not found.")
 
 
 def expand_all_rows(page):
