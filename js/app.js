@@ -25,7 +25,7 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
     sessions.forEach(s => {
         if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
         const submittedAt = new Date(s.submittedAt);
-        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
         if (now < payoutExpected) return;
         const email = (s.userEmail || '').toLowerCase();
@@ -70,7 +70,7 @@ function getPayoutCountdown(session, isPaidOut) {
 
     const now = new Date();
     const submittedAt = new Date(session.submittedAt);
-    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+    const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : session.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
     const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
     const remainingMs = payoutExpected - now;
 
@@ -158,7 +158,7 @@ function calculateNextPaycheck(sessions, deadline, emailPayouts) {
         const earnings = parseFloat(session.earnings) || 0;
 
         const submittedAt = new Date(session.submittedAt);
-        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+        const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : session.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
         if (now >= payoutExpected) {
@@ -610,7 +610,7 @@ const App = {
             <tr class="hover:bg-white/5 transition-colors">
                 <td class="px-4 py-3 text-sm text-white">${this.formatDate(s.date)}${userBadge}</td>
                 <td class="px-4 py-3 text-sm">
-                    <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : s.type === 'referral' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : s.type === 'referral' ? 'Referral' : 'Task'}</span>
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium ${s.type === 'project' ? 'bg-violet-500/20 text-violet-400' : s.type === 'referral' ? 'bg-emerald-500/20 text-emerald-400' : s.type === 'bonus' ? 'bg-amber-500/20 text-amber-400' : 'bg-cyan-500/20 text-cyan-400'}">${s.type === 'project' ? 'Project' : s.type === 'referral' ? 'Referral' : s.type === 'bonus' ? 'Bonus' : 'Task'}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-right text-white">${parseFloat(s.duration) > 0 ? parseFloat(s.duration).toFixed(2) + 'h' : '-'}</td>
                 <td class="px-4 py-3 text-sm text-right font-medium text-emerald-400">${formatCurrency(s.earnings)}</td>
@@ -660,7 +660,7 @@ const App = {
                     const getAvailableAt = (s) => {
                         if (!s.submittedAt) return 0;
                         const submittedAt = new Date(s.submittedAt);
-                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+                        const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
                         return submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
                     };
                     return mult * (getAvailableAt(a) - getAvailableAt(b));

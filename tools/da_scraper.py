@@ -174,6 +174,7 @@ def parse_da_html(html):
     rows = soup.select('tr[id^="row-"]')
     entries = []
     current_project = None
+    is_bonus_project = False
 
     for row in rows:
         row_class = row.get('class', [])
@@ -241,6 +242,7 @@ def parse_da_html(html):
         # Date rows are purple bg AND tw-ml-0 (top-level)
         if is_date_row and is_top_level:
             current_project = None
+            is_bonus_project = False
             continue
 
         # Detect referral badge (blue badge with "referral" text)
@@ -265,6 +267,7 @@ def parse_da_html(html):
         is_project_header = (is_top_level or 'tw-ml-5' in title_div_class) and not is_sub_item
         if is_project_header and title not in ('Task Submission', 'Time Entry'):
             current_project = title
+            is_bonus_project = bool(re.search(r'(?i)submission\s+bonus|bonus\s+survey', title))
             continue
 
         if not is_sub_item:
@@ -293,8 +296,9 @@ def parse_da_html(html):
 
         elif title == 'Task Submission' and amount > 0 and submitted_ms:
             submitted_dt = datetime.fromtimestamp(submitted_ms / 1000, tz=timezone.utc)
+            entry_type = 'bonus' if is_bonus_project else 'task'
             entries.append({
-                'type': 'task',
+                'type': entry_type,
                 'amount': round(amount, 2),
                 'duration': 0,
                 'durationText': '',
@@ -481,7 +485,7 @@ def import_to_sheets(corrections, unmatched):
             'duration': da['duration'],
             'type': da['type'],
             'projectId': da['projectName'],
-            'notes': 'Referral Bonus' if da['type'] == 'referral' else '',
+            'notes': 'Referral Bonus' if da['type'] == 'referral' else 'Submission Bonus' if da['type'] == 'bonus' else '',
             'hourlyRate': round(da['amount'] / da['duration']) if da['duration'] > 0 else 0,
             'earnings': da['amount'],
             'submittedAt': da['submittedAt']

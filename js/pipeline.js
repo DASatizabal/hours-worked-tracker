@@ -107,7 +107,7 @@ const Pipeline = {
                 return;
             }
 
-            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
+            const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
             const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
             if (now < payoutExpected) {
