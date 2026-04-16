@@ -657,14 +657,24 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Chronological by availableAt (desc): highest countdown → most recently available → oldest
-                    const getAvailableAt = (s) => {
-                        if (!s.submittedAt) return 0;
+                    // Visual grouping: countdown → ✓ available → $ paid out
+                    // Within each group: most recent availability first
+                    const now = new Date();
+                    const paidOut = this._paidOutIds || new Set();
+                    const getPayoutSort = (s) => {
+                        if (!s.submittedAt) return { group: 1, availAt: 0 };
                         const submittedAt = new Date(s.submittedAt);
                         const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
-                        return submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
+                        const availAt = submittedAt.getTime() + payoutHours * 60 * 60 * 1000;
+                        if (now.getTime() < availAt) return { group: 2, availAt };
+                        if (paidOut.has(s.id)) return { group: 0, availAt };
+                        return { group: 1, availAt };
                     };
-                    return mult * (getAvailableAt(a) - getAvailableAt(b));
+                    const infoA = getPayoutSort(a);
+                    const infoB = getPayoutSort(b);
+                    if (infoA.group !== infoB.group) return mult * (infoA.group - infoB.group);
+                    // Within group: countdown sorts high→low remaining, available/paid sort recent→oldest
+                    return mult * (infoA.availAt - infoB.availAt);
                 default:
                     return 0;
             }
