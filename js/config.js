@@ -1,6 +1,6 @@
 // Configuration for Hours Worked Tracker
 
-const APP_VERSION = '2.0.35';
+const APP_VERSION = '2.0.36';
 
 // Auth roles
 const AUTH_ROLES = {
@@ -46,7 +46,7 @@ const CONFIG = {
     PROJECT_PAYOUT_HOURS: 168,  // 7 days
     TASK_PAYOUT_HOURS: 72,      // 3 days
     REFERRAL_PAYOUT_HOURS: 48,  // 2 days
-    BONUS_PAYOUT_HOURS: 168,    // 7 days
+    BONUS_PAYOUT_HOURS: 72,     // 3 days (same as tasks)
     PAYPAL_TRANSFER_BUSINESS_DAYS: 3,
     DEFAULT_PAYOUT_WEEKDAY: 2,  // 0=Sunday, 1=Monday, 2=Tuesday (default), etc.
     DEFAULT_AUTO_PAYOUT_ENABLED: false,
