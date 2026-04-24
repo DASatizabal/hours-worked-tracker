@@ -33,7 +33,7 @@ import logging
 from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from da_common import (
     SCRIPT_DIR, HTML_OUTPUT_DIR, DA_PAYMENTS_URL,
@@ -56,6 +56,30 @@ def ensure_view_all_tab(page):
             log.info("  -> 'View All' tab selected.")
     except Exception:
         log.info("  -> Could not find 'View All' tab, continuing with current view.")
+
+
+def wait_for_payments_table(page, timeout_ms=15000):
+    """Wait for the payments table to render with at least one row.
+
+    Guards against a race where page.content() returns an empty body if React
+    hasn't hydrated the table yet — seen as silent 28-byte HTML dumps with
+    0 parsed entries. Raises if the table never shows up so the run fails
+    loudly instead of importing nothing.
+    """
+    try:
+        page.wait_for_function(
+            """() => {
+                const table = document.querySelector('table');
+                if (!table) return false;
+                return table.querySelectorAll('tr').length > 1;
+            }""",
+            timeout=timeout_ms,
+        )
+    except PWTimeout:
+        raise RuntimeError(
+            f"Payments table did not render within {timeout_ms}ms — "
+            "page likely not fully hydrated. Aborting to avoid saving empty HTML."
+        )
 
 
 def toggle_show_paid(page, enable=False):
@@ -132,6 +156,7 @@ def expand_all_rows(page):
 def scrape_all_pages(page, show_paid=False):
     """Expand all rows on every page, handling pagination via the 'Next' button."""
     ensure_view_all_tab(page)
+    wait_for_payments_table(page)
     toggle_show_paid(page, enable=show_paid)
 
     all_html_parts = []
