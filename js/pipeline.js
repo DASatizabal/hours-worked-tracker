@@ -209,7 +209,8 @@ const Pipeline = {
         this.STAGES.forEach((stage, i) => {
             const total = totals[stage];
             const colors = this.STAGE_COLORS[stage];
-            const isActive = total > 0;
+            // Match the rounded display: values that render as $0.00 should not appear active
+            const isActive = total >= 0.005;
 
             if (i > 0) {
                 html += `<div class="pipeline-connector flex-1 ${isActive ? 'bg-white/20' : 'bg-white/5'}"></div>`;
