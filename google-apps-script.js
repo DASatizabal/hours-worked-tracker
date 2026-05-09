@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.36
+ * VERSION: 2.0.39
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -39,7 +39,7 @@ const FAMILY_MEMBERS = {
 const USER_SCOPED_TABS = ['WorkSessions', 'Goals', 'GoalAllocations', 'EmailPayouts'];
 
 const TABS = {
-  WorkSessions: ['UserEmail', 'Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'ID'],
+  WorkSessions: ['UserEmail', 'Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'SubmittedAtMs', 'ID'],
   Goals: ['UserEmail', 'Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
   GoalAllocations: ['UserEmail', 'GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
   EmailPayouts: ['UserEmail', 'Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
@@ -159,27 +159,41 @@ function addRecord(tab, record) {
 
   const headers = TABS[tab];
 
-  // Dedup guard for WorkSessions: reject if a row with the same UserEmail + Date + Earnings + SubmittedAt already exists
-  if (tab === 'WorkSessions' && record.date) {
+  // Dedup guard for WorkSessions.
+  // Preferred path: match by UserEmail + SubmittedAtMs, which is unique-to-the-millisecond
+  // and stable across DA scrapes. Falls back to UserEmail + Date + Earnings + SubmittedAt
+  // for legacy callers that don't supply submittedAtMs.
+  if (tab === 'WorkSessions') {
     var userCol = headers.indexOf('UserEmail');
     var dateCol = headers.indexOf('Date');
     var earnCol = headers.indexOf('Earnings');
     var subCol = headers.indexOf('SubmittedAt');
-    if (dateCol !== -1 && earnCol !== -1) {
+    var msCol = headers.indexOf('SubmittedAtMs');
+    var newUserEmail = (record.userEmail || '').toLowerCase();
+    var newMs = record.submittedAtMs ? parseInt(record.submittedAtMs, 10) : 0;
+
+    if (msCol !== -1 && newMs > 0) {
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
+        if (newUserEmail && rowEmail && rowEmail !== newUserEmail) continue;
+        var rowMs = parseInt(data[i][msCol], 10) || 0;
+        if (rowMs === newMs) {
+          return createResponse({ success: true, duplicate: true, record: record });
+        }
+      }
+    } else if (record.date && dateCol !== -1 && earnCol !== -1) {
       var data = sheet.getDataRange().getValues();
       var newEarnings = parseFloat(record.earnings) || 0;
       var newDate = String(record.date).slice(0, 10);
-      var newUserEmail = (record.userEmail || '').toLowerCase();
       var newSubmittedAt = record.submittedAt ? String(record.submittedAt).slice(0, 19) : '';
       for (var i = 1; i < data.length; i++) {
-        // Only check duplicates for the same user
         var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
         if (newUserEmail && rowEmail && rowEmail !== newUserEmail) continue;
         var rowDate = data[i][dateCol] instanceof Date
           ? data[i][dateCol].toISOString().split('T')[0]
           : String(data[i][dateCol]).slice(0, 10);
         if (rowDate !== newDate || (parseFloat(data[i][earnCol]) || 0) !== newEarnings) continue;
-        // Date + Earnings match — check SubmittedAt to distinguish legitimate same-day entries
         var rowSubmittedAt = subCol !== -1 ? String(data[i][subCol] || '').slice(0, 19) : '';
         if (newSubmittedAt && rowSubmittedAt && newSubmittedAt !== rowSubmittedAt) continue;
         return createResponse({ success: true, duplicate: true, record: record });
@@ -767,8 +781,10 @@ function addMissingIds() {
   Logger.log('Added IDs to ' + count + ' rows');
 }
 
-// Find and highlight duplicate WorkSessions (same SubmittedAt + Earnings).
-// Keeps the earliest row (lowest row number) and highlights later duplicates in red.
+// Find and highlight duplicate WorkSessions.
+// Keys on (UserEmail + SubmittedAtMs) when available — the only stable, unique-to-the-ms
+// identity DA gives us. Falls back to (UserEmail + Date + Earnings) for legacy rows that
+// haven't been backfilled with SubmittedAtMs yet.
 // Run this manually from the Apps Script editor, then review the red rows and delete them.
 function flagDuplicateWorkSessions() {
   var ss = SpreadsheetApp.openById(SHEET_ID);
@@ -777,6 +793,7 @@ function flagDuplicateWorkSessions() {
   var headers = data[0];
   var userCol = headers.indexOf('UserEmail');
   var subCol = headers.indexOf('SubmittedAt');
+  var msCol = headers.indexOf('SubmittedAtMs');
   var earnCol = headers.indexOf('Earnings');
   var idCol = headers.indexOf('ID');
   var noteCol = headers.indexOf('Notes');
@@ -787,7 +804,6 @@ function flagDuplicateWorkSessions() {
     return { error: 'Missing Date or Earnings column' };
   }
 
-  // Build map of (userEmail + date + earnings) -> first row index
   var seen = {};
   var duplicates = [];
 
@@ -796,7 +812,10 @@ function flagDuplicateWorkSessions() {
       ? data[i][dateCol].toISOString().split('T')[0]
       : String(data[i][dateCol]).slice(0, 10);
     var rowEmail = userCol !== -1 ? (data[i][userCol] || '').toString().toLowerCase() : '';
-    var key = rowEmail + '|' + rowDate + '|' + String(parseFloat(data[i][earnCol]) || 0);
+    var rowMs = msCol !== -1 ? (parseInt(data[i][msCol], 10) || 0) : 0;
+    var key = rowMs > 0
+      ? rowEmail + '|ms|' + rowMs
+      : rowEmail + '|' + rowDate + '|' + String(parseFloat(data[i][earnCol]) || 0);
     if (seen[key] !== undefined) {
       duplicates.push({
         row: i + 1,
@@ -896,4 +915,70 @@ function migrateAddUserEmail() {
   });
 
   Logger.log('Migration complete!');
+}
+
+// Run this ONCE from the Apps Script editor to add SubmittedAtMs column to WorkSessions.
+// Inserts the column right after SubmittedAt and backfills it from existing SubmittedAt
+// ISO strings where possible. After this runs, the next scrape's reconciler will lock in
+// the canonical DA millisecond timestamp for each row by amount+type fallback matching;
+// once that single backfill scrape completes, all future runs match purely on SubmittedAtMs.
+function migrateAddSubmittedAtMs() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('WorkSessions');
+  if (!sheet) {
+    Logger.log('WorkSessions tab not found, aborting.');
+    return;
+  }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('SubmittedAtMs') !== -1) {
+    Logger.log('SubmittedAtMs column already exists, only backfilling missing values.');
+  } else {
+    var subIdx = headers.indexOf('SubmittedAt');
+    if (subIdx === -1) {
+      Logger.log('SubmittedAt column not found, aborting.');
+      return;
+    }
+    sheet.insertColumnAfter(subIdx + 1);
+    sheet.getRange(1, subIdx + 2).setValue('SubmittedAtMs');
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  }
+
+  var subCol = headers.indexOf('SubmittedAt');
+  var msCol = headers.indexOf('SubmittedAtMs');
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    Logger.log('No data rows to backfill.');
+    return;
+  }
+
+  var data = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  var updates = [];
+  var filled = 0;
+  var skipped = 0;
+
+  for (var i = 0; i < data.length; i++) {
+    var existing = parseInt(data[i][msCol], 10);
+    if (existing > 0) {
+      updates.push([existing]);
+      continue;
+    }
+    var iso = String(data[i][subCol] || '').trim();
+    if (!iso) {
+      updates.push(['']);
+      skipped++;
+      continue;
+    }
+    var ms = Date.parse(iso);
+    if (isNaN(ms)) {
+      updates.push(['']);
+      skipped++;
+      continue;
+    }
+    updates.push([ms]);
+    filled++;
+  }
+
+  sheet.getRange(2, msCol + 1, updates.length, 1).setValues(updates);
+  Logger.log('SubmittedAtMs migration: filled ' + filled + ', skipped ' + skipped + ' (' + (lastRow - 1) + ' total rows).');
 }

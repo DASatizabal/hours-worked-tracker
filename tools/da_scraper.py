@@ -58,28 +58,44 @@ def ensure_view_all_tab(page):
         log.info("  -> Could not find 'View All' tab, continuing with current view.")
 
 
-def wait_for_payments_table(page, timeout_ms=15000):
+def _try_wait_for_table(page, timeout_ms):
+    page.wait_for_function(
+        """() => {
+            const table = document.querySelector('table');
+            if (!table) return false;
+            return table.querySelectorAll('tr').length > 1;
+        }""",
+        timeout=timeout_ms,
+    )
+
+
+def wait_for_payments_table(page, timeout_ms=30000, retries=1):
     """Wait for the payments table to render with at least one row.
 
     Guards against a race where page.content() returns an empty body if React
     hasn't hydrated the table yet — seen as silent 28-byte HTML dumps with
-    0 parsed entries. Raises if the table never shows up so the run fails
-    loudly instead of importing nothing.
+    0 parsed entries. On the first timeout we reload and try again, since
+    intermittent slow hydrations are the most common failure mode (Apr 24,
+    Apr 28, Apr 30 all hit a 15s timeout that survived a reload).
     """
-    try:
-        page.wait_for_function(
-            """() => {
-                const table = document.querySelector('table');
-                if (!table) return false;
-                return table.querySelectorAll('tr').length > 1;
-            }""",
-            timeout=timeout_ms,
-        )
-    except PWTimeout:
-        raise RuntimeError(
-            f"Payments table did not render within {timeout_ms}ms — "
-            "page likely not fully hydrated. Aborting to avoid saving empty HTML."
-        )
+    attempt = 0
+    while True:
+        try:
+            _try_wait_for_table(page, timeout_ms)
+            return
+        except PWTimeout:
+            if attempt >= retries:
+                raise RuntimeError(
+                    f"Payments table did not render within {timeout_ms}ms after "
+                    f"{attempt + 1} attempt(s) — page not fully hydrated. "
+                    "Aborting to avoid saving empty HTML."
+                )
+            attempt += 1
+            log.info(f"  -> Table didn't hydrate in {timeout_ms}ms, reloading and retrying ({attempt}/{retries})...")
+            try:
+                page.reload(wait_until='domcontentloaded', timeout=30000)
+            except Exception as e:
+                log.info(f"  -> Reload errored ({e}); continuing with retry anyway.")
 
 
 def toggle_show_paid(page, enable=False):
@@ -155,8 +171,11 @@ def expand_all_rows(page):
 
 def scrape_all_pages(page, show_paid=False):
     """Expand all rows on every page, handling pagination via the 'Next' button."""
-    ensure_view_all_tab(page)
+    # Wait for the table to hydrate BEFORE clicking 'View All'. Clicking tabs on a
+    # partially-rendered UI was the suspected trigger for past hydration timeouts.
     wait_for_payments_table(page)
+    ensure_view_all_tab(page)
+    wait_for_payments_table(page)  # confirm table re-rendered after the tab switch
     toggle_show_paid(page, enable=show_paid)
 
     all_html_parts = []
@@ -267,22 +286,36 @@ def parse_da_html(html):
             duration_el = amount_td.select_one('.tw-text-sm.tw-text-black-60') if amount_td else None
             time_text = duration_el.get_text(strip=True) if duration_el else ''
 
-        # Get submitted timestamp
-        time_el = row.select_one('[data-column-id="timeAgo"] time[datetime]')
-        if not time_el and amount_td:
-            time_el = amount_td.select_one('time[datetime]')
+        # Get submitted timestamp.
+        # DA renders "<state> <time>relative</time> · <time>X ago</time>" where
+        # the first <time> is either past ("Pending Approval ·") or future
+        # ("Transferrable in X ·" — a shared payout-batch marker, not unique
+        # per row), and the <time> after the "·" separator is always the real
+        # submission timestamp. Grab the one after the separator so submittedAtMs
+        # is always the stable, unique-to-the-millisecond submission time.
         submitted_ms = None
-        if time_el and time_el.get('datetime'):
-            try:
-                ts = int(time_el['datetime'])
-                # DA reuses time[datetime] for two things:
-                # - "Pending Approval · X ago" → past timestamp (submission date) ✓
-                # - "Transferrable in X · Y ago" → future timestamp (payout window) ✗
-                # Only use past timestamps as submittedAt
-                if ts <= int(datetime.now(tz=timezone.utc).timestamp() * 1000):
-                    submitted_ms = ts
-            except (ValueError, TypeError):
-                pass
+        for sep in row.select('span'):
+            if sep.get_text(strip=True) != '·':
+                continue
+            nxt = sep.find_next_sibling()
+            if nxt and nxt.name == 'time' and nxt.get('datetime'):
+                try:
+                    submitted_ms = int(nxt['datetime'])
+                except (ValueError, TypeError):
+                    submitted_ms = None
+                break
+        # Fallback for the legacy single-<time> shape (no "·" separator).
+        if submitted_ms is None:
+            time_el = row.select_one('[data-column-id="timeAgo"] time[datetime]')
+            if not time_el and amount_td:
+                time_el = amount_td.select_one('time[datetime]')
+            if time_el and time_el.get('datetime'):
+                try:
+                    ts = int(time_el['datetime'])
+                    if ts <= int(datetime.now(tz=timezone.utc).timestamp() * 1000):
+                        submitted_ms = ts
+                except (ValueError, TypeError):
+                    pass
 
         # Date rows are purple bg AND tw-ml-0 (top-level)
         if is_date_row and is_top_level:
@@ -380,14 +413,43 @@ def fetch_existing_sessions():
 
 
 def reconcile_da_entries(da_entries, sessions):
-    """Match DA entries against existing sessions."""
+    """Match DA entries against existing sessions.
+
+    Primary key: submittedAtMs — DA's millisecond submission timestamp, stable
+    across scrapes and unique to the millisecond. Sessions imported before the
+    SubmittedAtMs column existed get a one-shot fallback match by amount+type
+    within ±3 days; those matches are returned as `backfills` so the importer
+    can lock in their submittedAtMs for future runs. After every legacy session
+    has been backfilled, only the primary-key path is exercised and the log
+    quiets down to matched/new only.
+    """
     matched = []
-    corrections = []
+    backfills = []
     unmatched = []
     used_session_ids = set()
 
+    by_ms = {}
+    legacy_sessions = []
+    for s in sessions:
+        try:
+            ms = int(s.get('submittedAtMs') or 0)
+        except (ValueError, TypeError):
+            ms = 0
+        if ms > 0:
+            by_ms[ms] = s
+        else:
+            legacy_sessions.append(s)
+
     for da in da_entries:
-        if not da['submittedAt']:
+        da_ms = da.get('submittedAtMs')
+        if da_ms and da_ms in by_ms:
+            session = by_ms[da_ms]
+            if session['id'] not in used_session_ids:
+                used_session_ids.add(session['id'])
+                matched.append({'da': da, 'session': session})
+                continue
+
+        if not da.get('submittedAt'):
             unmatched.append({'da': da})
             continue
 
@@ -396,36 +458,32 @@ def reconcile_da_entries(da_entries, sessions):
         best_match = None
         best_time_diff = float('inf')
 
-        for session in sessions:
+        for session in legacy_sessions:
             sid = session.get('id', '')
             if sid in used_session_ids:
                 continue
-
             try:
                 s_earnings = round(float(session.get('earnings', 0)), 2)
             except (ValueError, TypeError):
                 continue
             if s_earnings != da['amount']:
                 continue
-
             if session.get('type') != da['type']:
                 continue
 
             session_submitted = session.get('submittedAt')
             session_date_str = session.get('date', '')
+            session_dt = None
             if session_submitted:
                 try:
                     session_dt = datetime.fromisoformat(session_submitted)
                 except ValueError:
-                    session_dt = datetime.fromisoformat(session_date_str) if session_date_str else None
-            elif session_date_str:
+                    session_dt = None
+            if session_dt is None and session_date_str:
                 try:
                     session_dt = datetime.fromisoformat(session_date_str)
                 except ValueError:
-                    continue
-            else:
-                continue
-
+                    session_dt = None
             if session_dt is None:
                 continue
 
@@ -436,62 +494,50 @@ def reconcile_da_entries(da_entries, sessions):
 
             time_diff = abs((da_date - session_dt).total_seconds())
             day_diff = time_diff / (60 * 60 * 24)
-
             if day_diff <= 3 and time_diff < best_time_diff:
                 best_match = session
                 best_time_diff = time_diff
 
         if best_match:
             used_session_ids.add(best_match['id'])
-            old_submitted = best_match.get('submittedAt')
-            if old_submitted:
-                try:
-                    old_dt = datetime.fromisoformat(old_submitted)
-                    if da_date.tzinfo and not old_dt.tzinfo:
-                        old_dt = old_dt.replace(tzinfo=timezone.utc)
-                    time_diff_min = abs((da_date - old_dt).total_seconds()) / 60
-                except ValueError:
-                    time_diff_min = float('inf')
-            else:
-                time_diff_min = float('inf')
-
-            if time_diff_min <= 5:
-                matched.append({'da': da, 'session': best_match})
-            else:
-                corrections.append({
-                    'da': da,
-                    'session': best_match,
-                    'oldSubmittedAt': old_submitted,
-                    'newSubmittedAt': da['submittedAt']
-                })
+            backfills.append({'da': da, 'session': best_match})
         else:
             unmatched.append({'da': da})
 
-    log.info(f"  -> Reconciliation: {len(matched)} matched, {len(corrections)} corrections, {len(unmatched)} new")
+    log.info(f"  -> Reconciliation: {len(matched)} matched, {len(backfills)} legacy backfills, {len(unmatched)} new")
     return {
         'matched': matched,
-        'corrections': corrections,
+        'backfills': backfills,
         'unmatched': unmatched,
         'total': len(da_entries)
     }
 
 
-def import_to_sheets(corrections, unmatched):
-    """Push corrections and new entries to Google Sheets via Apps Script."""
+def import_to_sheets(backfills, unmatched):
+    """Push legacy backfills and new entries to Google Sheets via Apps Script.
+
+    `backfills` are existing sessions that matched a DA entry only via the
+    one-shot amount+type fallback (no submittedAtMs yet). We update them to
+    lock in submittedAtMs (and the canonical submittedAt) so future scrapes
+    match by primary key alone.
+    """
     if not da_common.APPS_SCRIPT_URL:
         log.error("APPS_SCRIPT_URL not set — cannot import to Sheets.")
         return
 
-    if not corrections and not unmatched:
+    if not backfills and not unmatched:
         log.info("[6/6] Nothing to import — all entries already matched.")
         return
 
-    log.info(f"[6/6] Importing to Sheets: {len(corrections)} corrections, {len(unmatched)} new entries...")
+    log.info(f"[6/6] Importing to Sheets: {len(backfills)} legacy backfills, {len(unmatched)} new entries...")
 
-    for c in corrections:
-        session = c['session']
-        da = c['da']
-        updates = {'submittedAt': c['newSubmittedAt']}
+    for b in backfills:
+        session = b['session']
+        da = b['da']
+        updates = {
+            'submittedAt': da['submittedAt'],
+            'submittedAtMs': da['submittedAtMs'],
+        }
 
         s_duration = float(session.get('duration', 0) or 0)
         if da['duration'] > 0 and s_duration == 0:
@@ -517,11 +563,11 @@ def import_to_sheets(corrections, unmatched):
             )
             result = resp.json()
             if result.get('error'):
-                log.error(f"  -> Correction failed for {session['id']}: {result['error']}")
+                log.error(f"  -> Backfill failed for {session['id']}: {result['error']}")
             else:
-                log.info(f"  -> Corrected {session['id']}: submittedAt -> {c['newSubmittedAt'][:19]}")
+                log.info(f"  -> Backfilled {session['id']}: submittedAtMs={da['submittedAtMs']} ({da['submittedAt'][:19]})")
         except Exception as e:
-            log.error(f"  -> Correction request failed for {session['id']}: {e}")
+            log.error(f"  -> Backfill request failed for {session['id']}: {e}")
 
     for u in unmatched:
         da = u['da']
@@ -538,7 +584,8 @@ def import_to_sheets(corrections, unmatched):
             'notes': 'Referral Bonus' if da['type'] == 'referral' else 'Submission Bonus' if da['type'] == 'bonus' else '',
             'hourlyRate': round(da['amount'] / da['duration']) if da['duration'] > 0 else 0,
             'earnings': da['amount'],
-            'submittedAt': da['submittedAt']
+            'submittedAt': da['submittedAt'],
+            'submittedAtMs': da['submittedAtMs'],
         }
 
         try:
@@ -618,13 +665,13 @@ def main():
                               "Aborting import to prevent duplicates. HTML backup saved.")
                 else:
                     result = reconcile_da_entries(da_entries, sessions)
-                    import_to_sheets(result['corrections'], result['unmatched'])
+                    import_to_sheets(result['backfills'], result['unmatched'])
 
                     log.info("")
                     log.info("=" * 55)
                     log.info(" DONE! Data reconciled via API.")
                     log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
-                             f"{len(result['corrections'])} corrected, {len(result['unmatched'])} new")
+                             f"{len(result['backfills'])} legacy-backfilled, {len(result['unmatched'])} new")
                     log.info(f" HTML backup: {saved_path}")
                     log.info("=" * 55)
 
