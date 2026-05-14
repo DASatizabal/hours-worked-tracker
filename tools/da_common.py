@@ -301,9 +301,11 @@ def login_to_da(page):
     else:
         log.info("[2/6] Already logged in, skipping.")
 
-    if "/workers/payments" not in page.url:
-        page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
-
+    # Always force a fresh navigation to /workers/payments after login. DA's SPA
+    # sometimes lands us in a partially-hydrated state (blank page, no tabs) when
+    # we don't reload — empirically the page is reliable only after an explicit
+    # goto. Idempotent: if we were already there, this is just a reload.
+    page.goto(DA_PAYMENTS_URL, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(2000)
 
 
@@ -327,10 +329,15 @@ def create_browser_and_page(playwright, headless=False, block_payouts=False):
 
     # Block DA's auto-payout: their frontend JS fires POST /get_paid on page load
     # when the 72h cooldown has expired. Only the payer script should allow this.
+    # Restrict to POST only — DA's client-side router may GET this path during
+    # hydration, and aborting that can leave the page stuck/blank.
     if block_payouts:
         def handle_route(route):
-            log.info(f"  [BLOCKED] {route.request.method} {route.request.url} — auto-payout intercepted")
-            route.abort()
+            if route.request.method == "POST":
+                log.info(f"  [BLOCKED] {route.request.method} {route.request.url} — auto-payout intercepted")
+                route.abort()
+            else:
+                route.continue_()
         page.route("**/workers/payments/get_paid", handle_route)
 
     # Capture browser console messages and network requests for debugging

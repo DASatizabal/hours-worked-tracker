@@ -45,17 +45,63 @@ import da_common
 log = logging.getLogger("da_scraper")
 
 
-def ensure_view_all_tab(page):
-    """Make sure the 'View All' tab is active so we see everything."""
-    log.info("[3/6] Ensuring 'View All' tab is active...")
+def _try_click_funds_history_tab(page, timeout_ms):
+    """Single attempt to find and click the Funds History tab.
+
+    Returns True if the tab was found (and clicked if needed), False otherwise.
+    """
     try:
-        view_all = page.locator('text="View All"').first
-        if view_all.is_visible():
-            view_all.click()
+        tab = page.locator('#fundsHistory-tab').first
+        tab.wait_for(state="visible", timeout=timeout_ms)
+        if tab.get_attribute('aria-selected') != 'true':
+            tab.click()
             page.wait_for_timeout(1000)
-            log.info("  -> 'View All' tab selected.")
+            log.info("  -> 'Funds History' tab selected.")
+        else:
+            log.info("  -> 'Funds History' tab already active.")
+        return True
     except Exception:
-        log.info("  -> Could not find 'View All' tab, continuing with current view.")
+        pass
+
+    try:
+        tab = page.locator('button[role="tab"]', has_text="Funds History").first
+        if tab.is_visible(timeout=2000):
+            tab.click()
+            page.wait_for_timeout(1000)
+            log.info("  -> 'Funds History' tab selected (text fallback).")
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def ensure_funds_history_tab(page):
+    """Make sure the 'Funds History' tab is active so the payments table renders.
+
+    DA's payments page is now a tabbed view; 'Funds History' is the tab that
+    holds the per-task payment rows the scraper parses. If the tab isn't found
+    on the first try, the page likely failed to hydrate — reload once and retry,
+    matching the resilience pattern in wait_for_payments_table().
+    """
+    log.info("[3/6] Ensuring 'Funds History' tab is active...")
+    if _try_click_funds_history_tab(page, 10000):
+        return
+
+    log.info("  -> Tab not found on first attempt; reloading and retrying...")
+    try:
+        page.reload(wait_until='domcontentloaded', timeout=30000)
+        page.wait_for_timeout(2000)
+    except Exception as e:
+        log.info(f"  -> Reload errored ({e}); retrying tab lookup anyway.")
+
+    if _try_click_funds_history_tab(page, 15000):
+        return
+
+    raise RuntimeError(
+        "Could not find 'Funds History' tab after reload — page failed to hydrate. "
+        "Aborting to avoid scraping the wrong tab or saving empty HTML."
+    )
 
 
 def _try_wait_for_table(page, timeout_ms):
@@ -171,11 +217,12 @@ def expand_all_rows(page):
 
 def scrape_all_pages(page, show_paid=False):
     """Expand all rows on every page, handling pagination via the 'Next' button."""
-    # Wait for the table to hydrate BEFORE clicking 'View All'. Clicking tabs on a
-    # partially-rendered UI was the suspected trigger for past hydration timeouts.
+    # The payments page is a tabbed UI; the <table> only renders inside the
+    # Funds History panel. We must click that tab BEFORE waiting on the table,
+    # otherwise wait_for_payments_table times out on the default tab where no
+    # table exists.
+    ensure_funds_history_tab(page)
     wait_for_payments_table(page)
-    ensure_view_all_tab(page)
-    wait_for_payments_table(page)  # confirm table re-rendered after the tab switch
     toggle_show_paid(page, enable=show_paid)
 
     all_html_parts = []
