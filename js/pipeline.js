@@ -92,17 +92,18 @@ const Pipeline = {
             in_bank: 0
         };
 
-        // Bucketing: when a session has a DA-reported daStatus, trust DA's
-        // status as the source of truth (set by the scraper for May 2026+
-        // entries). For older or manual entries with no status, fall back to
-        // the elapsed-time heuristic.
-        //
-        // Status semantics:
-        //   pending   → still awaiting approval at DA      → 'Submitted'
-        //   available → released to PayPal payout pool     → 'Available for Payout'
-        //   paid      → DA already paid it; covered by the daTotal pool below
+        // Bucketing: status-driven for entries DA has labeled, time-based for
+        // everything else.
+        //   pending   → 'Submitted'
+        //   available → 'Available for Payout' (direct, no pool subtraction)
+        //   paid      → not counted here; lives in the daTotal pool below
+        // Legacy (no status):
+        //   future timer → 'Submitted'
+        //   past timer   → pooled with daTotal subtraction (same as before)
         let sessionsStillWaiting = 0;
-        let sessionsPastWaiting = 0;
+        let statusAvailable = 0;
+        let statusPaid = 0;
+        let legacyPastWaiting = 0;
 
         workSessions.forEach(s => {
             const earnings = parseFloat(s.earnings) || 0;
@@ -114,19 +115,18 @@ const Pipeline = {
                 return;
             }
             if (status === 'available') {
-                sessionsPastWaiting += earnings;
+                statusAvailable += earnings;
                 return;
             }
             if (status === 'paid') {
-                // Paid entries contribute to daTotal via the email pool below;
-                // no per-row bucket on the unpaid side.
+                statusPaid += earnings;
                 return;
             }
 
             // No status — legacy time-based logic
             const submittedAt = s.submittedAt ? new Date(s.submittedAt) : null;
             if (!submittedAt) {
-                sessionsPastWaiting += earnings;
+                legacyPastWaiting += earnings;
                 return;
             }
 
@@ -136,7 +136,7 @@ const Pipeline = {
             if (now < payoutExpected) {
                 sessionsStillWaiting += earnings;
             } else {
-                sessionsPastWaiting += earnings;
+                legacyPastWaiting += earnings;
             }
         });
 
@@ -183,8 +183,15 @@ const Pipeline = {
         });
         unmatchedBankDeposits = Math.max(0, unmatchedBankDeposits);
 
-        // Available for Payout = sessions past waiting - DA payouts (pool subtraction, matches DA's logic)
-        totals.pending_payout = Math.max(0, sessionsPastWaiting - daTotal);
+        // Available for Payout =
+        //   sum of DA-reported 'available' sessions (taken directly, NOT
+        //   pool-subtracted — those amounts haven't been paid yet) PLUS the
+        //   legacy residue: past-waiting rows with no daStatus that the DA
+        //   payout pool hasn't yet covered. The legacy pool is reduced by
+        //   amounts already accounted for in known-paid sessions, so we
+        //   don't double-subtract.
+        const legacyPoolResidue = Math.max(0, daTotal - statusPaid);
+        totals.pending_payout = statusAvailable + Math.max(0, legacyPastWaiting - legacyPoolResidue);
 
         // In PayPal = DA payouts - transfers - unmatched bank deposits (min 0)
         totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - unmatchedBankDeposits);
