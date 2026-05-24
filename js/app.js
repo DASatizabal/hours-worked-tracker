@@ -84,19 +84,13 @@ function getPayoutCountdown(session, isPaidOut) {
         return { html: '-', expired: true };
     }
 
-    // DA-reported status takes precedence over elapsed time.
+    // Terminal/released states from DA override the timer entirely.
     const status = (session.daStatus || '').toString().toLowerCase();
     if (status === 'paid') {
         return { html: '<span class="text-emerald-400">$</span>', expired: true };
     }
     if (status === 'available') {
         return { html: '<span class="text-emerald-400">✓</span>', expired: true };
-    }
-    if (status === 'pending') {
-        // DA still has it in 'Pending Approval' regardless of how long it's
-        // been past the legacy 72/168h window. Show an explicit "waiting on DA"
-        // marker rather than a misleading countdown or '✓ available'.
-        return { html: '<span class="text-yellow-400">⏳</span>', expired: false };
     }
 
     const now = new Date();
@@ -105,9 +99,15 @@ function getPayoutCountdown(session, isPaidOut) {
     const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
     const remainingMs = payoutExpected - now;
 
-    // Already available for payout (legacy time-based)
+    // Pending past the expected timer: DA is still holding it. Distinct from
+    // both '✓ available' and the legacy 'silently considered paid via FIFO'.
+    if (status === 'pending' && remainingMs <= 0) {
+        return { html: '<span class="text-yellow-400">⏳</span>', expired: false };
+    }
+
+    // Timer expired with no DA status (manual/legacy entries) — use the
+    // FIFO-derived isPaidOut flag to choose '$' vs '✓'.
     if (remainingMs <= 0) {
-        // Show money sign if paid out, check mark if just available
         const icon = isPaidOut ? '$' : '✓';
         return {
             html: `<span class="text-emerald-400">${icon}</span>`,
