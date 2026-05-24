@@ -10,10 +10,10 @@ Setup:
     playwright install chromium
 
 Usage:
-    python da_scraper.py              # Full flow: scrape + import into tracker
-    python da_scraper.py --html-only  # Just save HTML to file, skip tracker import
-    python da_scraper.py --show-paid  # Also include already-paid entries
-    python da_scraper.py --auto       # Unattended mode (headless, no prompts, daily scrape)
+    python da_scraper.py                 # Full flow (includes paid; default)
+    python da_scraper.py --html-only     # Just save HTML to file, skip tracker import
+    python da_scraper.py --no-show-paid  # Unpaid-only scrape
+    python da_scraper.py --auto          # Unattended mode (headless, no prompts)
     python da_scraper.py --profile lisa  # Use Lisa's credentials
 
 Credentials:
@@ -43,6 +43,24 @@ from da_common import (
 import da_common
 
 log = logging.getLogger("da_scraper")
+
+# Status tracking applies only to entries submitted on/after this date.
+# Older entries fall back to legacy time-based pipeline logic — we don't
+# retroactively annotate historical rows.
+STATUS_TRACKING_CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
+
+
+def should_track_status(submitted_at_iso):
+    """True when a DA entry's submission time is on/after the cutoff."""
+    if not submitted_at_iso:
+        return False
+    try:
+        dt = datetime.fromisoformat(submitted_at_iso)
+    except (ValueError, TypeError):
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt >= STATUS_TRACKING_CUTOFF
 
 
 def _try_click_funds_history_tab(page, timeout_ms):
@@ -333,14 +351,13 @@ def parse_da_html(html):
             duration_el = amount_td.select_one('.tw-text-sm.tw-text-black-60') if amount_td else None
             time_text = duration_el.get_text(strip=True) if duration_el else ''
 
-        # Get submitted timestamp.
-        # DA renders "<state> <time>relative</time> · <time>X ago</time>" where
-        # the first <time> is either past ("Pending Approval ·") or future
-        # ("Transferrable in X ·" — a shared payout-batch marker, not unique
-        # per row), and the <time> after the "·" separator is always the real
-        # submission timestamp. Grab the one after the separator so submittedAtMs
-        # is always the stable, unique-to-the-millisecond submission time.
+        # DA renders "<state> · <time>X ago</time>" where the state is one of
+        # "Pending Approval", "Transferrable in N days" (shared batch marker),
+        # or "Paid", and the <time> after the "·" is the real submission
+        # timestamp. Read both off the same separator: submission <time> is the
+        # sep's next sibling, status text is the prev sibling's text.
         submitted_ms = None
+        da_status = ''
         for sep in row.select('span'):
             if sep.get_text(strip=True) != '·':
                 continue
@@ -350,6 +367,17 @@ def parse_da_html(html):
                     submitted_ms = int(nxt['datetime'])
                 except (ValueError, TypeError):
                     submitted_ms = None
+                prev = sep.find_previous_sibling()
+                status_text = prev.get_text(' ', strip=True).lower() if prev else ''
+                if 'paid' in status_text:
+                    da_status = 'paid'
+                elif 'pending approval' in status_text:
+                    da_status = 'pending'
+                elif 'transferrable' in status_text or 'transferable' in status_text:
+                    da_status = 'available'
+                elif status_text:
+                    log.warning(f"Unknown DA status text: {status_text!r} — defaulting to 'pending'")
+                    da_status = 'pending'
                 break
         # Fallback for the legacy single-<time> shape (no "·" separator).
         if submitted_ms is None:
@@ -389,7 +417,8 @@ def parse_da_html(html):
                     'durationText': '',
                     'submittedAt': ref_dt.isoformat(),
                     'submittedAtMs': ref_ms,
-                    'projectName': 'Referral Bonus'
+                    'projectName': 'Referral Bonus',
+                    'daStatus': da_status,
                 })
             continue
 
@@ -421,7 +450,8 @@ def parse_da_html(html):
                 'durationText': time_text,
                 'submittedAt': submitted_dt.isoformat(),
                 'submittedAtMs': submitted_ms,
-                'projectName': current_project or ''
+                'projectName': current_project or '',
+                'daStatus': da_status,
             })
 
         elif title == 'Task Submission' and amount > 0 and submitted_ms:
@@ -434,7 +464,8 @@ def parse_da_html(html):
                 'durationText': '',
                 'submittedAt': submitted_dt.isoformat(),
                 'submittedAtMs': submitted_ms,
-                'projectName': current_project or ''
+                'projectName': current_project or '',
+                'daStatus': da_status,
             })
 
     log.info(f"  -> Parsed {len(entries)} DA entries from HTML")
@@ -471,6 +502,7 @@ def reconcile_da_entries(da_entries, sessions):
     quiets down to matched/new only.
     """
     matched = []
+    status_updates = []
     backfills = []
     unmatched = []
     used_session_ids = set()
@@ -494,6 +526,13 @@ def reconcile_da_entries(da_entries, sessions):
             if session['id'] not in used_session_ids:
                 used_session_ids.add(session['id'])
                 matched.append({'da': da, 'session': session})
+                # Emit a status-only update if (a) entry is in-scope (May+),
+                # (b) sheet's status isn't already 'paid' (terminal), and
+                # (c) scraped status differs from what the sheet has.
+                if should_track_status(da.get('submittedAt')) and da.get('daStatus'):
+                    existing_status = (session.get('daStatus') or '').lower()
+                    if existing_status != 'paid' and existing_status != da['daStatus']:
+                        status_updates.append({'da': da, 'session': session})
                 continue
 
         if not da.get('submittedAt'):
@@ -551,32 +590,69 @@ def reconcile_da_entries(da_entries, sessions):
         else:
             unmatched.append({'da': da})
 
-    log.info(f"  -> Reconciliation: {len(matched)} matched, {len(backfills)} legacy backfills, {len(unmatched)} new")
+    log.info(f"  -> Reconciliation: {len(matched)} matched ({len(status_updates)} status updates), "
+             f"{len(backfills)} legacy backfills, {len(unmatched)} new")
     return {
         'matched': matched,
+        'status_updates': status_updates,
         'backfills': backfills,
         'unmatched': unmatched,
         'total': len(da_entries)
     }
 
 
-def import_to_sheets(backfills, unmatched):
-    """Push legacy backfills and new entries to Google Sheets via Apps Script.
+def import_to_sheets(backfills, unmatched, status_updates=None):
+    """Push legacy backfills, status updates, and new entries to Google Sheets.
 
     `backfills` are existing sessions that matched a DA entry only via the
     one-shot amount+type fallback (no submittedAtMs yet). We update them to
     lock in submittedAtMs (and the canonical submittedAt) so future scrapes
     match by primary key alone.
+
+    `status_updates` are existing sessions whose scraped DAStatus differs from
+    what's on the sheet (and isn't already terminal 'paid'). Status-only writes.
     """
+    status_updates = status_updates or []
+
     if not da_common.APPS_SCRIPT_URL:
         log.error("APPS_SCRIPT_URL not set — cannot import to Sheets.")
         return
 
-    if not backfills and not unmatched:
+    if not backfills and not unmatched and not status_updates:
         log.info("[6/6] Nothing to import — all entries already matched.")
         return
 
-    log.info(f"[6/6] Importing to Sheets: {len(backfills)} legacy backfills, {len(unmatched)} new entries...")
+    log.info(f"[6/6] Importing to Sheets: {len(backfills)} legacy backfills, "
+             f"{len(status_updates)} status updates, {len(unmatched)} new entries...")
+    now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+    for s in status_updates:
+        session = s['session']
+        da = s['da']
+        updates = {'daStatus': da['daStatus'], 'daStatusAt': now_iso}
+        try:
+            payload = json.dumps({
+                'action': 'update',
+                'tab': 'WorkSessions',
+                'id': session['id'],
+                'updates': updates,
+            })
+            resp = requests.post(
+                da_common.APPS_SCRIPT_URL,
+                headers={'Content-Type': 'text/plain'},
+                data=payload,
+                timeout=30,
+                allow_redirects=True,
+            )
+            result = resp.json()
+            if result.get('error'):
+                log.error(f"  -> Status update failed for {session['id']}: {result['error']}")
+            else:
+                old_status = session.get('daStatus') or '(none)'
+                log.info(f"  -> Status {session['id']}: {old_status} -> {da['daStatus']}")
+        except Exception as e:
+            log.error(f"  -> Status update request failed for {session['id']}: {e}")
+        time.sleep(0.05)
 
     for b in backfills:
         session = b['session']
@@ -585,6 +661,9 @@ def import_to_sheets(backfills, unmatched):
             'submittedAt': da['submittedAt'],
             'submittedAtMs': da['submittedAtMs'],
         }
+        if should_track_status(da.get('submittedAt')) and da.get('daStatus'):
+            updates['daStatus'] = da['daStatus']
+            updates['daStatusAt'] = now_iso
 
         s_duration = float(session.get('duration', 0) or 0)
         if da['duration'] > 0 and s_duration == 0:
@@ -634,6 +713,9 @@ def import_to_sheets(backfills, unmatched):
             'submittedAt': da['submittedAt'],
             'submittedAtMs': da['submittedAtMs'],
         }
+        if should_track_status(da.get('submittedAt')) and da.get('daStatus'):
+            record['daStatus'] = da['daStatus']
+            record['daStatusAt'] = now_iso
 
         try:
             payload = json.dumps({
@@ -665,8 +747,12 @@ def main():
                         help="Only extract and save HTML, don't import into tracker")
     parser.add_argument("--headless", action="store_true",
                         help="Run without visible browser")
-    parser.add_argument("--show-paid", action="store_true",
-                        help="Include already-paid entries (check 'Show paid')")
+    # 'Include paid' is now the default — needed so the reconciler can flip
+    # in-flight entries to 'paid' and pick up DA-only orphans that paid before
+    # they ever reached the sheet. Use --no-show-paid for unpaid-only scrapes.
+    parser.add_argument("--no-show-paid", dest="show_paid", action="store_false",
+                        help="Skip already-paid entries (default is to include them)")
+    parser.set_defaults(show_paid=True)
     parser.add_argument("--auto", action="store_true",
                         help="Unattended mode: headless, no prompts")
     parser.add_argument("--profile", default="default",
@@ -712,12 +798,13 @@ def main():
                               "Aborting import to prevent duplicates. HTML backup saved.")
                 else:
                     result = reconcile_da_entries(da_entries, sessions)
-                    import_to_sheets(result['backfills'], result['unmatched'])
+                    import_to_sheets(result['backfills'], result['unmatched'], result['status_updates'])
 
                     log.info("")
                     log.info("=" * 55)
                     log.info(" DONE! Data reconciled via API.")
-                    log.info(f" {result['total']} DA entries: {len(result['matched'])} matched, "
+                    log.info(f" {result['total']} DA entries: {len(result['matched'])} matched "
+                             f"({len(result['status_updates'])} status updates), "
                              f"{len(result['backfills'])} legacy-backfilled, {len(result['unmatched'])} new")
                     log.info(f" HTML backup: {saved_path}")
                     log.info("=" * 55)

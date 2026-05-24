@@ -92,7 +92,15 @@ const Pipeline = {
             in_bank: 0
         };
 
-        // Calculate Submitted and Available for Payout from work sessions
+        // Bucketing: when a session has a DA-reported daStatus, trust DA's
+        // status as the source of truth (set by the scraper for May 2026+
+        // entries). For older or manual entries with no status, fall back to
+        // the elapsed-time heuristic.
+        //
+        // Status semantics:
+        //   pending   → still awaiting approval at DA      → 'Submitted'
+        //   available → released to PayPal payout pool     → 'Available for Payout'
+        //   paid      → DA already paid it; covered by the daTotal pool below
         let sessionsStillWaiting = 0;
         let sessionsPastWaiting = 0;
 
@@ -100,9 +108,24 @@ const Pipeline = {
             const earnings = parseFloat(s.earnings) || 0;
             if (earnings <= 0) return;
 
+            const status = (s.daStatus || '').toString().toLowerCase();
+            if (status === 'pending') {
+                sessionsStillWaiting += earnings;
+                return;
+            }
+            if (status === 'available') {
+                sessionsPastWaiting += earnings;
+                return;
+            }
+            if (status === 'paid') {
+                // Paid entries contribute to daTotal via the email pool below;
+                // no per-row bucket on the unpaid side.
+                return;
+            }
+
+            // No status — legacy time-based logic
             const submittedAt = s.submittedAt ? new Date(s.submittedAt) : null;
             if (!submittedAt) {
-                // No submittedAt = treat as past waiting period
                 sessionsPastWaiting += earnings;
                 return;
             }

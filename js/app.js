@@ -15,29 +15,47 @@ function formatNumber(num, decimals = 2) {
     });
 }
 
-// Determine which sessions have been paid out (DA payout covers them FIFO, per user)
+// Determine which sessions have been paid out.
+//
+// Status-driven first: a row with daStatus='paid' is paid; daStatus='pending'
+// or 'available' is explicitly NOT paid (DA still owns it). For rows with no
+// status (manual entries / pre-2026-05-01 legacy data), fall back to the FIFO
+// pool: DA payout email totals cover past-waiting sessions in availability
+// order. The pool is reduced by the sum of known-paid sessions so we don't
+// double-count.
 function getPaidOutSessionIds(sessions, emailPayouts) {
     const now = new Date();
     const paidIds = new Set();
-
-    // Group sessions past waiting period by user, sorted by availability date
+    const knownPaidByUser = {};
     const byUser = {};
+
     sessions.forEach(s => {
-        if (!s.submittedAt || (parseFloat(s.earnings) || 0) <= 0) return;
+        const earnings = parseFloat(s.earnings) || 0;
+        if (earnings <= 0) return;
+        const email = (s.userEmail || '').toLowerCase();
+        const status = (s.daStatus || '').toString().toLowerCase();
+
+        if (status === 'paid') {
+            paidIds.add(s.id);
+            knownPaidByUser[email] = (knownPaidByUser[email] || 0) + earnings;
+            return;
+        }
+        // DA says pending/available — definitively not paid.
+        if (status) return;
+
+        // Unstatused: time-based candidacy for FIFO pool coverage.
+        if (!s.submittedAt) return;
         const submittedAt = new Date(s.submittedAt);
         const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
         if (now < payoutExpected) return;
         s._availableAt = payoutExpected.getTime();
-        const email = (s.userEmail || '').toLowerCase();
         if (!byUser[email]) byUser[email] = [];
         byUser[email].push(s);
     });
 
-    // Sort by availability date (earliest-available first)
     Object.values(byUser).forEach(arr => arr.sort((a, b) => a._availableAt - b._availableAt));
 
-    // Sum DA payouts per user
     const daTotals = {};
     (emailPayouts || []).forEach(e => {
         if (e.source !== 'dataannotation') return;
@@ -45,18 +63,15 @@ function getPaidOutSessionIds(sessions, emailPayouts) {
         daTotals[email] = (daTotals[email] || 0) + (parseFloat(e.amount) || 0);
     });
 
-    // Walk each user's sessions by availability date, covering with their DA total
     for (const email of Object.keys(byUser)) {
-        let remaining = daTotals[email] || 0;
+        // Reduce the pool by amounts already covered by known-paid sessions
+        let remaining = (daTotals[email] || 0) - (knownPaidByUser[email] || 0);
         for (const s of byUser[email]) {
             const earnings = parseFloat(s.earnings) || 0;
-            // Use penny tolerance to avoid floating point drift after many subtractions
             if (remaining >= earnings - 0.01) {
                 remaining -= earnings;
                 paidIds.add(s.id);
             }
-            // Don't break — DA pool subtraction can cover smaller sessions
-            // even when a larger one can't be fully covered yet
         }
     }
 
@@ -69,13 +84,28 @@ function getPayoutCountdown(session, isPaidOut) {
         return { html: '-', expired: true };
     }
 
+    // DA-reported status takes precedence over elapsed time.
+    const status = (session.daStatus || '').toString().toLowerCase();
+    if (status === 'paid') {
+        return { html: '<span class="text-emerald-400">$</span>', expired: true };
+    }
+    if (status === 'available') {
+        return { html: '<span class="text-emerald-400">✓</span>', expired: true };
+    }
+    if (status === 'pending') {
+        // DA still has it in 'Pending Approval' regardless of how long it's
+        // been past the legacy 72/168h window. Show an explicit "waiting on DA"
+        // marker rather than a misleading countdown or '✓ available'.
+        return { html: '<span class="text-yellow-400">⏳</span>', expired: false };
+    }
+
     const now = new Date();
     const submittedAt = new Date(session.submittedAt);
     const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : session.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
     const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
     const remainingMs = payoutExpected - now;
 
-    // Already available for payout
+    // Already available for payout (legacy time-based)
     if (remainingMs <= 0) {
         // Show money sign if paid out, check mark if just available
         const icon = isPaidOut ? '$' : '✓';
@@ -657,11 +687,18 @@ const App = {
                 case 'projectId':
                     return mult * (a.projectId || '').localeCompare(b.projectId || '');
                 case 'payout':
-                    // Visual grouping: countdown → ✓ available → $ paid out
+                    // Visual grouping: countdown/pending → ✓ available → $ paid out
                     // Within each group: most recent availability first
                     const now = new Date();
                     const paidOut = this._paidOutIds || new Set();
                     const getPayoutSort = (s) => {
+                        // DA-reported status takes precedence
+                        const status = (s.daStatus || '').toString().toLowerCase();
+                        const submittedAtMs = s.submittedAt ? new Date(s.submittedAt).getTime() : 0;
+                        if (status === 'paid') return { group: 0, availAt: submittedAtMs };
+                        if (status === 'available') return { group: 1, availAt: submittedAtMs };
+                        if (status === 'pending') return { group: 2, availAt: submittedAtMs };
+
                         if (!s.submittedAt) return { group: 1, availAt: 0 };
                         const submittedAt = new Date(s.submittedAt);
                         const payoutHours = s.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : s.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : s.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;

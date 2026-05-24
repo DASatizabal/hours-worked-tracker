@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.42
+ * VERSION: 2.0.43
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -39,7 +39,7 @@ const FAMILY_MEMBERS = {
 const USER_SCOPED_TABS = ['WorkSessions', 'Goals', 'GoalAllocations', 'EmailPayouts'];
 
 const TABS = {
-  WorkSessions: ['UserEmail', 'Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'SubmittedAtMs', 'ID'],
+  WorkSessions: ['UserEmail', 'Date', 'Duration', 'Type', 'ProjectID', 'Notes', 'HourlyRate', 'Earnings', 'SubmittedAt', 'SubmittedAtMs', 'DAStatus', 'DAStatusAt', 'ID'],
   Goals: ['UserEmail', 'Name', 'Icon', 'TargetAmount', 'SavedAmount', 'CreatedAt', 'CompletedAt', 'ID'],
   GoalAllocations: ['UserEmail', 'GoalId', 'PaymentId', 'Amount', 'Date', 'Notes', 'ID'],
   EmailPayouts: ['UserEmail', 'Source', 'DAPaymentId', 'Amount', 'ReceivedAt', 'PaypalTransactionId', 'EstimatedArrival', 'ID'],
@@ -981,4 +981,49 @@ function migrateAddSubmittedAtMs() {
 
   sheet.getRange(2, msCol + 1, updates.length, 1).setValues(updates);
   Logger.log('SubmittedAtMs migration: filled ' + filled + ', skipped ' + skipped + ' (' + (lastRow - 1) + ' total rows).');
+}
+
+// Run this ONCE from the Apps Script editor to add DAStatus + DAStatusAt columns
+// to WorkSessions. They go right after SubmittedAtMs and before ID, matching the
+// TABS spec. No backfill — existing rows leave the columns blank, and the pipeline
+// falls back to legacy time-based bucketing until the next scrape writes status
+// (which only happens for entries submitted on/after 2026-05-01 anyway).
+function migrateAddDAStatus() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName('WorkSessions');
+  if (!sheet) {
+    Logger.log('WorkSessions tab not found, aborting.');
+    return;
+  }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var statusIdx = headers.indexOf('DAStatus');
+  var statusAtIdx = headers.indexOf('DAStatusAt');
+  var anchorIdx = headers.indexOf('SubmittedAtMs');
+  if (anchorIdx === -1) {
+    Logger.log('SubmittedAtMs column not found — run migrateAddSubmittedAtMs first.');
+    return;
+  }
+
+  // Insert DAStatus right after SubmittedAtMs (if missing)
+  if (statusIdx === -1) {
+    sheet.insertColumnAfter(anchorIdx + 1);
+    sheet.getRange(1, anchorIdx + 2).setValue('DAStatus');
+    Logger.log('Inserted DAStatus column at position ' + (anchorIdx + 2));
+    headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    statusIdx = headers.indexOf('DAStatus');
+  } else {
+    Logger.log('DAStatus column already exists.');
+  }
+
+  // Insert DAStatusAt right after DAStatus (if missing)
+  if (statusAtIdx === -1) {
+    sheet.insertColumnAfter(statusIdx + 1);
+    sheet.getRange(1, statusIdx + 2).setValue('DAStatusAt');
+    Logger.log('Inserted DAStatusAt column at position ' + (statusIdx + 2));
+  } else {
+    Logger.log('DAStatusAt column already exists.');
+  }
+
+  Logger.log('DAStatus migration complete.');
 }
