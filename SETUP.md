@@ -1,5 +1,5 @@
 # Hours Worked Tracker - Setup Guide
-**Current Version: v2.0.42**
+**Current Version: v2.0.45**
 
 ## 1. Firebase Setup (Google Sign-In)
 
@@ -163,4 +163,27 @@ v2.0.0 adds multi-user support. Each family member sees their own data by defaul
    EMAIL_PROVIDER=yahoo  # or gmail
    ```
 2. Run with: `python da_scraper.py --auto --profile lisa`
-3. Set up Task Scheduler with `run_scraper_lisa.bat` and `run_get_paid_lisa.bat`
+3. Set up Task Scheduler to run the **hidden** launchers `run_scraper_lisa_hidden.vbs` and `run_get_paid_lisa_hidden.vbs` (Program/script: `wscript.exe`, Arguments: the quoted `.vbs` path). These wrap the matching `.bat` files but suppress the console window so scheduled runs never steal focus. See **Hidden (background) scheduled runs** below.
+
+## Hidden (background) scheduled runs
+
+The scraper runs headless in `--auto` mode, so the only thing that pops up when a `.bat` fires is the **cmd console window**, which steals focus and covers whatever you're working on. To suppress it, each `.bat` has a matching `_hidden.vbs` wrapper in `tools/` that launches it with a hidden window:
+
+| Batch file | Hidden launcher |
+| --- | --- |
+| `run_scraper.bat` | `run_scraper_hidden.vbs` |
+| `run_scraper_lisa.bat` | `run_scraper_lisa_hidden.vbs` |
+| `run_get_paid.bat` | `run_get_paid_hidden.vbs` |
+| `run_get_paid_lisa.bat` | `run_get_paid_lisa_hidden.vbs` |
+
+**To use them:**
+- **Manual / double-click:** double-click the `_hidden.vbs` instead of the `.bat`.
+- **Task Scheduler:** set the action's *Program/script* to `wscript.exe` and *Arguments* to the quoted full path of the `.vbs`, e.g. `"L:\...\hours-worked-tracker\tools\run_scraper_hidden.vbs"`.
+
+The wrappers change nothing about behavior — error logging to `tools/logs/scraper_errors.log` is unchanged; only the window visibility differs.
+
+**Auto-payout task:** `tools/manage_scheduled_task.py` (which builds the weekly `DA_AutoPayout_*` task from Sheets settings) automatically points the task at the `_hidden.vbs` wrapper, falling back to the `.bat` only if the wrapper is missing. Re-run it once to apply the hidden wrapper to an already-created task:
+```
+python tools/manage_scheduled_task.py
+python tools/manage_scheduled_task.py --profile lisa
+```

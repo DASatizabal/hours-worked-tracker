@@ -108,10 +108,20 @@ def delete_task(task_name):
 
 def create_task(task_name, profile, weekday, hour24):
     """Create or update a weekly scheduled task."""
-    bat_file = SCRIPT_DIR / f'run_get_paid{"_" + profile if profile != "default" else ""}.bat'
+    suffix = "_" + profile if profile != "default" else ""
+    bat_file = SCRIPT_DIR / f'run_get_paid{suffix}.bat'
     if not bat_file.exists():
         log.error(f"Batch file not found: {bat_file}")
         sys.exit(1)
+
+    # Launch via the hidden .vbs wrapper so no console window pops up / steals
+    # focus when the task fires. Falls back to the .bat if the wrapper is absent.
+    vbs_file = SCRIPT_DIR / f'run_get_paid{suffix}_hidden.vbs'
+    if vbs_file.exists():
+        task_run = f'wscript.exe "{vbs_file}"'
+    else:
+        log.warning(f"Hidden wrapper not found ({vbs_file.name}); task will show a console window")
+        task_run = str(bat_file)
 
     day_abbr = SCHTASKS_DAYS[weekday]
     time_str = f"{hour24:02d}:00"
@@ -122,7 +132,7 @@ def create_task(task_name, profile, weekday, hour24):
     cmd = [
         'schtasks', '/Create',
         '/TN', task_name,
-        '/TR', str(bat_file),
+        '/TR', task_run,
         '/SC', 'WEEKLY',
         '/D', day_abbr,
         '/ST', time_str,
@@ -131,7 +141,7 @@ def create_task(task_name, profile, weekday, hour24):
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
-        log.info(f"Created task '{task_name}': {DAY_NAMES[weekday]} at {time_str} -> {bat_file.name}")
+        log.info(f"Created task '{task_name}': {DAY_NAMES[weekday]} at {time_str} -> {task_run}")
     else:
         log.error(f"Failed to create task '{task_name}': {result.stderr}")
         sys.exit(1)

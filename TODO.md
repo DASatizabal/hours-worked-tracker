@@ -7,15 +7,17 @@ _No open items._
 
 ### David's setup
 1. `tools/.env` with DA_EMAIL, DA_PASSWORD, APPS_SCRIPT_URL, GMAIL_APP_PASSWORD
-2. Task Scheduler: "DA Payment Scrape" — daily, runs `run_scraper.bat`
-3. Task Scheduler: "DA Get Paid" — daily at noon, runs `run_get_paid.bat` (payday check in script)
+2. Task Scheduler: "DA Payment Scrape" — daily, runs `run_scraper_hidden.vbs` (hidden window; wraps `run_scraper.bat`)
+3. Task Scheduler: "DA Get Paid" — daily at noon, runs `run_get_paid_hidden.vbs` (payday check in script; wraps `run_get_paid.bat`)
 
 ### Lisa's setup
 1. `tools/.env.lisa` with DA_EMAIL, DA_PASSWORD, DA_USER_EMAIL, APPS_SCRIPT_URL, EMAIL_PROVIDER=gmail, IMAP_EMAIL, GMAIL_APP_PASSWORD
 2. Gmailify links Yahoo (`Lisa_Blackford@yahoo.com`) to Gmail (`Lisasatizabal@gmail.com`)
 3. Lisa deploys her own Apps Script (same SHEET_ID, runs as her account for GmailApp)
-4. Task Scheduler: "DA Scrape - Lisa" — daily 8:30 AM, runs `run_scraper_lisa.bat`
-5. Task Scheduler: "DA Get Paid - Lisa" — daily noon, runs `run_get_paid_lisa.bat` (payday check in script)
+4. Task Scheduler: "DA Scrape - Lisa" — daily 8:30 AM, runs `run_scraper_lisa_hidden.vbs` (hidden window; wraps `run_scraper_lisa.bat`)
+5. Task Scheduler: "DA Get Paid - Lisa" — daily noon, runs `run_get_paid_lisa_hidden.vbs` (payday check in script; wraps `run_get_paid_lisa.bat`)
+
+> **Hidden launchers:** Each `.bat` has a matching `_hidden.vbs` wrapper in `tools/` that runs it with no console window so scheduled runs never steal focus. Point Task Scheduler at `wscript.exe` with the quoted `.vbs` path. See SETUP.md → "Hidden (background) scheduled runs".
 
 ### Manual usage
 ```
