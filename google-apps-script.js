@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.45
+ * VERSION: 2.0.47
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -460,14 +460,23 @@ function parseDAPayoutEmail(msg) {
   const body = msg.getPlainBody() || msg.getBody();
   const date = msg.getDate().toISOString();
 
+  // The Gmail search (subject:payout) also catches DA "$X available for
+  // payout" *notification* emails, which are NOT actual payouts. Skip them —
+  // otherwise the amount gets recorded as a phantom DA payout with no matching
+  // PayPal transfer, leaving the money stuck in the "In PayPal" bucket.
+  if (/available\s+for\s+payout/i.test(body)) return null;
+
   // Extract amount - look for dollar amount pattern
   const amountMatch = body.match(/\$([0-9,]+\.?\d*)/);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(',', '')) : 0;
 
-  // Extract payment ID
-  const idMatch = body.match(/payment\s*(?:id|#|ID)[:\s]*([A-Za-z0-9_-]+)/i) ||
-                  body.match(/([A-Za-z0-9]{8,})/);
-  const daPaymentId = idMatch ? idMatch[1] : 'da_' + msg.getId();
+  // Extract payment ID. A real completed-payout email carries a payment ID;
+  // require the strong match. If only the weak fallback would hit (e.g. it
+  // grabbed the word "Available" from a notification), treat it as not a
+  // payout and skip rather than inventing a bogus id.
+  const idMatch = body.match(/payment\s*(?:id|#|ID)[:\s]*([A-Za-z0-9_-]+)/i);
+  if (!idMatch) return null;
+  const daPaymentId = idMatch[1];
 
   if (amount <= 0) return null;
 
