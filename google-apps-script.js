@@ -1,6 +1,6 @@
 /**
  * Google Apps Script Backend for Hours Worked Tracker
- * VERSION: 2.0.47
+ * VERSION: 2.0.48
  *
  * Supports 5-tab CRUD + Gmail email parsing for DA/PayPal payouts.
  *
@@ -23,14 +23,21 @@ const FAMILY_MEMBERS = {
     bankSource: 'chase_deposit',
     bankSearch: 'from:no.reply.alerts@chase.com subject:"deposit" newer_than:90d',
     bankIdField: 'chaseMessageId',
-    bankDedupSuffix: '_chase'
+    bankDedupSuffix: '_chase',
+    // Every address this member's legitimate payout/transfer/deposit emails are
+    // addressed to. Used to keep one member's deployment from scooping up and
+    // mis-attributing another member's emails when inboxes overlap (forwarding).
+    ownedAddresses: ['dasatizabal@gmail.com']
   },
   'lisasatizabal@gmail.com': {
     bank: 'sccu',
     bankSource: 'sccu_deposit',
     bankSearch: 'from:payments@sccu.com subject:"We deposited your payment" newer_than:90d',
     bankIdField: 'confirmationNumber',
-    bankDedupSuffix: '_sccu'
+    bankDedupSuffix: '_sccu',
+    // DA/PayPal go to the Yahoo address (synced to Gmail via Gmailify); some DA
+    // mail is addressed to the Gmail directly. Both count as Lisa's.
+    ownedAddresses: ['lisasatizabal@gmail.com', 'lisa_blackford@yahoo.com']
   }
 };
 
@@ -275,6 +282,18 @@ function upsertSetting(key, value) {
 
 // ============ Email Scanning ============
 
+// Returns true if the message is addressed to ANOTHER family member and NOT to
+// the deployer — used to skip emails that belong to a different member but
+// happen to sit in this deployer's mailbox (e.g. via forwarding). It only
+// excludes mail that explicitly belongs to someone else, so a deployer whose
+// own emails use an unlisted address is never wrongly skipped.
+function belongsToAnotherMember(msg, deployerAddresses, otherAddresses) {
+  var recipients = [msg.getTo(), msg.getCc(), msg.getBcc()].join(',').toLowerCase();
+  var addressedToDeployer = deployerAddresses.some(function(a) { return recipients.indexOf(a) !== -1; });
+  if (addressedToDeployer) return false;
+  return otherAddresses.some(function(a) { return recipients.indexOf(a) !== -1; });
+}
+
 function scanEmails() {
   var deployerEmail = DEPLOYER_EMAIL.toLowerCase();
   var memberConfig = FAMILY_MEMBERS[deployerEmail];
@@ -286,6 +305,16 @@ function scanEmails() {
     results.errors.push('Unknown deployer: ' + deployerEmail + '. Set DEPLOYER_EMAIL at top of script.');
     return { results };
   }
+
+  // Addresses owned by the deployer vs. by other family members. Any payout
+  // email addressed to another member (and not to the deployer) is skipped so
+  // it isn't mis-attributed to the deployer.
+  var deployerAddresses = (memberConfig.ownedAddresses || [deployerEmail]).map(function(a) { return a.toLowerCase(); });
+  var otherAddresses = [];
+  Object.keys(FAMILY_MEMBERS).forEach(function(email) {
+    if (email.toLowerCase() === deployerEmail) return;
+    (FAMILY_MEMBERS[email].ownedAddresses || [email]).forEach(function(a) { otherAddresses.push(a.toLowerCase()); });
+  });
 
   try {
     var sheet = SpreadsheetApp.openById(SHEET_ID);
@@ -307,6 +336,10 @@ function scanEmails() {
     daThreads.forEach(function(thread) {
       thread.getMessages().forEach(function(msg) {
         try {
+          if (belongsToAnotherMember(msg, deployerAddresses, otherAddresses)) {
+            Logger.log('Skipping DA payout addressed to another member (to: ' + msg.getTo() + ')');
+            return;
+          }
           var parsed = parseDAPayoutEmail(msg);
           if (parsed) { daPayouts.push(parsed); results.daPayouts++; }
         } catch (err) { results.errors.push('DA parse error: ' + err.message); }
@@ -330,6 +363,10 @@ function scanEmails() {
     ppThreads.forEach(function(thread) {
       thread.getMessages().forEach(function(msg) {
         try {
+          if (belongsToAnotherMember(msg, deployerAddresses, otherAddresses)) {
+            Logger.log('Skipping PayPal transfer addressed to another member (to: ' + msg.getTo() + ')');
+            return;
+          }
           var parsed = parsePayPalTransferEmail(msg);
           if (parsed) { ppTransfers.push(parsed); results.paypalTransfers++; }
         } catch (err) { results.errors.push('PayPal parse error: ' + err.message); }
@@ -381,6 +418,10 @@ function scanEmails() {
     bankThreads.forEach(function(thread) {
       thread.getMessages().forEach(function(msg) {
         try {
+          if (belongsToAnotherMember(msg, deployerAddresses, otherAddresses)) {
+            Logger.log('Skipping bank deposit addressed to another member (to: ' + msg.getTo() + ')');
+            return;
+          }
           var parsed = parseFn(msg);
           if (parsed) {
             bankDeposits.push(parsed);
