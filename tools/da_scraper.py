@@ -123,12 +123,13 @@ def ensure_funds_history_tab(page):
 
 
 def _try_wait_for_table(page, timeout_ms):
+    # Wait for at least one *data* row, not "more than one <tr>". The redesigned
+    # Funds History table has no <thead> header row — it's a bare <tbody> of
+    # tr[id^="row-"] entries — so when the account has a single unpaid entry the
+    # old "tr.length > 1" guard never passed and the scrape timed out. This also
+    # matches exactly what parse_da_html() extracts (tr[id^="row-"]).
     page.wait_for_function(
-        """() => {
-            const table = document.querySelector('table');
-            if (!table) return false;
-            return table.querySelectorAll('tr').length > 1;
-        }""",
+        """() => document.querySelectorAll('tr[id^="row-"]').length > 0""",
         timeout=timeout_ms,
     )
 
@@ -158,6 +159,9 @@ def wait_for_payments_table(page, timeout_ms=30000, retries=1):
             log.info(f"  -> Table didn't hydrate in {timeout_ms}ms, reloading and retrying ({attempt}/{retries})...")
             try:
                 page.reload(wait_until='domcontentloaded', timeout=30000)
+                # Reload drops back to the default Earnings tab, which has no
+                # table — re-select Funds History before retrying the wait.
+                ensure_funds_history_tab(page)
             except Exception as e:
                 log.info(f"  -> Reload errored ({e}); continuing with retry anyway.")
 
