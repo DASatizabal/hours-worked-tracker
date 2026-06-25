@@ -179,36 +179,31 @@ function getNextPayoutDeadline(weekday, hour24 = 12) {
 // Calculate estimated paycheck amount (sessions in Submitted or Available for Payout by deadline)
 // Excludes money already paid out (In PayPal / Transferring / In Bank)
 function calculateNextPaycheck(sessions, deadline, emailPayouts) {
-    const now = new Date();
-    let submitted = 0;      // Still in payout waiting period but will clear by deadline
-    let availableNow = 0;   // Already past waiting period (available for payout now)
+    // The next payout run pays out everything DA has marked "Available for Payout".
+    // That bucket is computed by the same daStatus-aware engine the pipeline uses,
+    // so start from it instead of re-deriving (and double-subtracting DA payouts).
+    const totals = Pipeline.calculateTotals(sessions, emailPayouts || []);
+    let amount = totals.pending_payout;
 
+    // Plus legacy/timer-only sessions (no DA status) still in the Submitted bucket
+    // whose waiting period will clear before the deadline. DA-tracked sessions are
+    // already reflected in the bucket above, so skip anything with a daStatus.
+    const now = new Date();
     for (const session of sessions) {
+        if ((session.daStatus || '').toString().trim()) continue;
         if (!session.submittedAt) continue;
 
         const earnings = parseFloat(session.earnings) || 0;
-
         const submittedAt = new Date(session.submittedAt);
         const payoutHours = session.type === 'task' ? CONFIG.TASK_PAYOUT_HOURS : session.type === 'referral' ? CONFIG.REFERRAL_PAYOUT_HOURS : session.type === 'bonus' ? CONFIG.BONUS_PAYOUT_HOURS : CONFIG.PROJECT_PAYOUT_HOURS;
         const payoutExpected = new Date(submittedAt.getTime() + payoutHours * 60 * 60 * 1000);
 
-        if (now >= payoutExpected) {
-            // Already past waiting period
-            availableNow += earnings;
-        } else if (payoutExpected <= deadline) {
-            // Still waiting but will clear by deadline
-            submitted += earnings;
+        if (now < payoutExpected && payoutExpected <= deadline) {
+            amount += earnings;
         }
     }
 
-    // Subtract DA payouts (money that moved from "Available" to "In PayPal")
-    const daPayoutTotal = (emailPayouts || [])
-        .filter(e => e.source === 'dataannotation')
-        .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-
-    const pendingPayout = Math.max(0, availableNow - daPayoutTotal);
-
-    return submitted + pendingPayout;
+    return amount;
 }
 
 // Get short weekday name
@@ -546,17 +541,14 @@ const App = {
     // ============ Dashboard Rendering ============
 
     renderDashboard(sessions, emailPayouts) {
-        // Total amount to be paid = all earnings - transfers that completed (in bank)
+        // Total amount to be paid = everything still in the pipeline that hasn't
+        // landed in the bank yet (Submitted + Available + In PayPal + Transferring).
+        // Derived from the same daStatus-aware engine as the Payment Pipeline so the
+        // top cards always reconcile with the pipeline buckets below.
         const totalEarnings = sessions.reduce((sum, s) => sum + (parseFloat(s.earnings) || 0), 0);
-        const now = new Date();
-        const inBankTotal = (emailPayouts || [])
-            .filter(e => {
-                if (e.source !== 'paypal_transfer') return false;
-                const arrival = e.estimatedArrival ? new Date(e.estimatedArrival) : null;
-                return arrival && now >= arrival;
-            })
-            .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-        const unpaid = totalEarnings - inBankTotal;
+        const pipelineTotals = Pipeline.calculateTotals(sessions, emailPayouts || []);
+        const unpaid = pipelineTotals.submitted + pipelineTotals.pending_payout
+                     + pipelineTotals.paid_out + pipelineTotals.transferring;
         const totalHours = sessions.reduce((sum, s) => sum + (parseFloat(s.duration) || 0), 0);
 
         document.getElementById('week-earnings').textContent = formatCurrency(Math.max(0, unpaid));
