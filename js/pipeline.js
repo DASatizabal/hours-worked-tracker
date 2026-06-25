@@ -183,15 +183,21 @@ const Pipeline = {
         });
         unmatchedBankDeposits = Math.max(0, unmatchedBankDeposits);
 
-        // Available for Payout =
-        //   sum of DA-reported 'available' sessions (taken directly, NOT
-        //   pool-subtracted — those amounts haven't been paid yet) PLUS the
-        //   legacy residue: past-waiting rows with no daStatus that the DA
-        //   payout pool hasn't yet covered. The legacy pool is reduced by
-        //   amounts already accounted for in known-paid sessions, so we
-        //   don't double-subtract.
-        const legacyPoolResidue = Math.max(0, daTotal - statusPaid);
-        totals.pending_payout = statusAvailable + Math.max(0, legacyPastWaiting - legacyPoolResidue);
+        // Available for Payout = money sitting in the "Available" stage by either
+        // method (DA-reported 'available' sessions + legacy past-waiting rows with
+        // no daStatus), MINUS the DA payout pool that has already moved it onward
+        // (into In PayPal / Transferring / Bank). statusPaid sessions already
+        // account for part of that pool, so only the residue is subtracted.
+        //
+        // The residue is drained from the WHOLE available pool — not just the
+        // legacy slice — because a recorded DA payout is definitive proof the money
+        // left "Available," even while the scraper still shows the source session as
+        // 'available' (it re-marks it 'paid' on its next run). Subtracting only the
+        // legacy slice double-counts that amount in both Available and Transferring.
+        // (The pool is safe to subtract now that v2.0.47 stopped phantom
+        // "available for payout" notifications from inflating daTotal.)
+        const poolResidue = Math.max(0, daTotal - statusPaid);
+        totals.pending_payout = Math.max(0, statusAvailable + legacyPastWaiting - poolResidue);
 
         // In PayPal = DA payouts - transfers - unmatched bank deposits (min 0)
         totals.paid_out = Math.max(0, daTotal - transfersCompleted - transfersInProgress - unmatchedBankDeposits);
